@@ -178,6 +178,7 @@ Inductive val :=
 
 Inductive result :=
   | Error (msg : string)
+  | Exn (v : val)
   | Val (v : val)
 .
 
@@ -257,15 +258,17 @@ Fixpoint eval_cont e σ k (n : nat) :=
     end
   end.
 
-Definition eval e n := eval_cont e (fun _ => None) (fun v => Halt (Val v), fun v => Halt (Error "Uncaught exception")) n.
-Definition eval_cps e n := eval (App (CPS e) (Pair (Fn "$x" (Var "$x")) (Fn "_" (Raise (Num 2024%Z))))) n.
+Definition eval e n := eval_cont e (fun _ => None) (fun v => Halt (Val v), fun v => Halt (Exn v)) n.
+Definition eval_cps e n := eval (App (CPS e) (Pair (Fn "$x" (Var "$x")) (Fn "$x" (Raise (Var "$x"))))) n.
 
 Compute eval test 9.
 Compute eval test1 9.
 Compute eval test2 9.
 Compute eval test3 9.
+Compute eval (Raise (Num 10))%Z 9.
 Compute eval_cps test 20.
 Compute eval_cps test1 28.
 Compute eval_cps test2 9.
 Compute eval_cps test3 9.
+Compute eval_cps (Raise (Num 10))%Z 9.
 
