@@ -44,7 +44,7 @@ Fixpoint trans (t : tm) (κ : (tm -> tm) * tm) :=
     in trans C (κC, snd κ)
   | App M N =>
     let κM m :=
-      let κN n := App (App m n) (Pair (Fn "$k" ((fst κ) (Var "$k"))) (snd κ))in
+      let κN n := App (App m n) (Pair (Fn "$k" ((fst κ) (Var "$k"))) (snd κ)) in
       trans N (κN, snd κ)
     in trans M (κM, snd κ)
   | Raise R => trans' R (snd κ, snd κ)
@@ -182,14 +182,17 @@ Inductive result :=
   | Val (v : val)
 .
 
-Inductive dom :=
+Inductive cont :=
   | Halt (r : result)
-  | Continue (e : tm) (σ : string -> option val) (k : (val -> dom) * (val -> dom))
+  | Continue (e : tm) (σ : string -> option val) (k : (val -> cont) * (val -> cont))
 .
 
-Fixpoint step (e : tm) (σ : string -> option val) (k : (val -> dom) * (val -> dom)) : dom :=
+Fixpoint step (e : tm) (σ : string -> option val) (k : (val -> cont) * (val -> cont)) : cont :=
   match e with
-  | Var x => match σ x with None => Halt (Error (x ++ " is not bound")) | Some v => (fst k) v end
+  | Var x => match σ x with
+    | None => Halt (Error (x ++ " is not bound."))
+    | Some v => (fst k) v
+    end
   | Num n => (fst k) (Int n)
   | Add l r =>
     let kl vl := match vl with
