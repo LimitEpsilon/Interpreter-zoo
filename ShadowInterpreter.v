@@ -29,15 +29,16 @@ with shadow :=
   | Call (s : shadow) (v : val)
 .
 
-Local Coercion Var : string >-> tm.
-Local Notation "'⟪' 'λ' x e '⟫'" := (Fn x e) (at level 60, right associativity).
-Local Notation "'⟪' '@' M N '⟫'" := (App M N) (at level 60, right associativity).
-Local Notation "'⟪' M '⋊' N '⟫'" := (Link M N) (at level 60, right associativity).
-Local Notation "'⟪' ε '⟫'" := (Mt) (at level 60, right associativity).
-Local Notation "'⟪' x '=' M ';' N '⟫'" := (Bind x M N) (at level 60, right associativity).
+Local Notation "'⟨' 'λ' x k σ '⟩'" := (Clos x (Some k) σ) (at level 60, right associativity, only printing).
+Local Notation "'⟨' 'λ' x '⊥' σ '⟩'" := (Clos x None σ) (at level 60, right associativity, only printing).
+Local Notation "'⟨' σ '⟩'" := (Mod σ) (at level 60, right associativity, only printing).
+Local Notation "'⟨' s '⟩'" := (Shadow_val s) (at level 60, right associativity, only printing).
+Local Notation "'⟪' β ',' s '⟫'" := (Shadow_env β s) (at level 60, right associativity, only printing).
+Local Notation "'⟪' β '⟫'" := (No_shadow β) (at level 60, right associativity, only printing).
 
 Definition ω := Fn "x" (App (Var "x") (Var "x")).
 Definition ι := Fn "x" (Var "x").
+Definition α := Fn "f" (Fn "x" (App (Var "f") (Var "x"))).
 
 Definition upd_env (σ : env) (x : string) (v : val) :=
   match σ with
@@ -94,9 +95,13 @@ Definition eval (link : env -> val -> option val) :=
   | Mt => Some (Mod (No_shadow []))
   | Bind x M N =>
     match eval M, eval N with
-    | Some v, Some (Mod σ) => Some (Mod (upd_env σ x v))
-    | Some v, Some (Shadow_val s) => Some (Mod (Shadow_env [(x, v)] s))
-    | Some _, Some (Clos _ _ _)
+    | Some v, Some σ =>
+      match link (Shadow_env [(x, v)] Init) σ with
+      | Some (Mod σ) => Some (Mod (upd_env σ x v))
+      | Some (Shadow_val s) => Some (Mod (Shadow_env [(x, v)] s))
+      | Some (Clos _ _ _) => None
+      | None => None
+      end
     | Some _, None | None, Some _ | None, None => None
     end
   end.
@@ -169,7 +174,13 @@ Local Coercion Mod : env >-> val.
 Compute interp 1 ω.
 Compute interp 100 (App ω ω).
 Compute interp 1 (App ι ι).
-Definition test_module := Bind "id" ι Mt.
-Definition open_program := App (Var "id") (Var "id").
-Compute interp 2 (Link test_module open_program).
+Definition test_module := Bind "app" α (Bind "id" ι Mt).
+Definition open1 := App (Var "id") (Var "id").
+Definition open2 := App (Var "app") (Var "id").
+Definition compute_in_fun1 := Fn "x" (App (App ι ι) (Var "x")).
+Definition compute_in_fun2 := Fn "x" (App ι (App ι (Var "x"))).
+Compute interp 2 (Link test_module open1).
+Compute interp 3 (Link test_module open2).
+Compute interp 3 compute_in_fun1.
+Compute interp 3 compute_in_fun2.
 
