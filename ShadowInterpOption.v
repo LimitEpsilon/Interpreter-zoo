@@ -1,4 +1,4 @@
-From Coq Require Import ZArith String List.
+From Coq Require Import Arith String List.
 Import ListNotations.
 
 Local Open Scope string_scope.
@@ -13,10 +13,7 @@ Inductive tm :=
 .
 
 Inductive env :=
-  | No_shadow (β : list (string * val))
-    (* no shadow at the bottom *)
-  | Shadow_env (β : list (string * val)) (s : shadow)
-    (* shadow at the bottom *)
+  | Env (β : list (string * val)) (s : option shadow)
 
 with val :=
   | Clos (x : string) (k : option val) (σ : env)
@@ -33,8 +30,8 @@ Local Notation "'⟨' 'λ' x k σ '⟩'" := (Clos x (Some k) σ) (at level 60, r
 Local Notation "'⟨' 'λ' x '⊥' σ '⟩'" := (Clos x None σ) (at level 60, right associativity, only printing).
 Local Notation "'⟨' σ '⟩'" := (Mod σ) (at level 60, right associativity, only printing).
 Local Notation "'⟨' s '⟩'" := (Shadow_val s) (at level 60, right associativity, only printing).
-Local Notation "'⟪' β ',' s '⟫'" := (Shadow_env β s) (at level 60, right associativity, only printing).
-Local Notation "'⟪' β '⟫'" := (No_shadow β) (at level 60, right associativity, only printing).
+Local Notation "'⟪' β  s '⟫'" := (Env β (Some s)) (at level 60, right associativity, only printing).
+Local Notation "'⟪' β  • '⟫'" := (Env β None) (at level 60, right associativity, only printing).
 
 Definition ω := Fn "x" (App (Var "x") (Var "x")).
 Definition ι := Fn "x" (Var "x").
@@ -42,14 +39,12 @@ Definition α := Fn "f" (Fn "x" (App (Var "f") (Var "x"))).
 
 Definition upd_env (σ : env) (x : string) (v : val) :=
   match σ with
-  | No_shadow β => No_shadow ((x, v) :: β)
-  | Shadow_env β s => Shadow_env ((x, v) :: β) s
+  | Env β s => Env ((x, v) :: β) s
   end.
 
 Definition app_env β σ :=
   match σ with
-  | No_shadow β' => No_shadow (β ++ β')
-  | Shadow_env β' s => Shadow_env (β ++ β') s
+  | Env β' s => Env (β ++ β') s
   end.
 
 Fixpoint read_list (β : list (string * val)) (x : string) :=
@@ -61,11 +56,14 @@ Fixpoint read_list (β : list (string * val)) (x : string) :=
 
 Definition read_env (σ : env) (x : string) :=
   match σ with
-  | No_shadow β => read_list β x
-  | Shadow_env β s =>
+  | Env β s =>
     match read_list β x with
     | Some v => Some v
-    | None => Some (Shadow_val (Read s x))
+    | None =>
+      match s with
+      | None => None
+      | Some s => Some (Shadow_val (Read s x))
+      end
     end
   end.
 
@@ -73,7 +71,7 @@ Definition eval (link : env -> val -> option val) :=
   fix eval (e : tm) : option val :=
   match e with
   | Var x => Some (Shadow_val (Read Init x))
-  | Fn x M => Some (Clos x (eval M) (Shadow_env [] Init))
+  | Fn x M => Some (Clos x (eval M) (Env [] (Some Init)))
   | App M N =>
     match eval M, eval N with
     | Some (Clos x B σ), Some v =>
@@ -88,17 +86,17 @@ Definition eval (link : env -> val -> option val) :=
   | Link M N =>
     match eval M, eval N with
     | Some (Mod σ), Some v => link σ v
-    | Some (Shadow_val s), Some v => link (Shadow_env [] s) v
+    | Some (Shadow_val s), Some v => link (Env [] (Some s)) v
     | Some (Clos _ _ _), Some _
     | Some _, None | None, Some _ | None, None => None
     end
-  | Mt => Some (Mod (No_shadow []))
+  | Mt => Some (Mod (Env [] None))
   | Bind x M N =>
     match eval M, eval N with
     | Some v, Some σ =>
-      match link (Shadow_env [(x, v)] Init) σ with
+      match link (Env [(x, v)] (Some Init)) σ with
       | Some (Mod σ) => Some (Mod (upd_env σ x v))
-      | Some (Shadow_val s) => Some (Mod (Shadow_env [(x, v)] s))
+      | Some (Shadow_val s) => Some (Mod (Env [(x, v)] (Some s)))
       | Some (Clos _ _ _) => None
       | None => None
       end
@@ -134,14 +132,14 @@ Fixpoint link (n : nat) (σ : env) : val -> option val :=
         end
       end
     in match σ' with
-    | No_shadow β =>
-      match link_list β with None => None | Some β => Some (No_shadow β) end
-    | Shadow_env β s =>
+    | Env β None =>
+      match link_list β with None => None | Some β => Some (Env β None) end
+    | Env β (Some s) =>
       match link_list β, link_shadow s with
       | None, _ | _, None => None
       | Some _, Some (Clos _ _ _) => None
       | Some β, Some (Mod σ) => Some (app_env β σ)
-      | Some β, Some (Shadow_val s) => Some (Shadow_env β s)
+      | Some β, Some (Shadow_val s) => Some (Env β (Some s))
       end
     end
   with link_shadow s : option val :=
@@ -180,7 +178,12 @@ Definition open2 := App (Var "app") (Var "id").
 Definition compute_in_fun1 := Fn "x" (App (App ι ι) (Var "x")).
 Definition compute_in_fun2 := Fn "x" (App ι (App ι (Var "x"))).
 Compute interp 2 (Link test_module open1).
-Compute interp 3 (Link test_module open2).
-Compute interp 3 compute_in_fun1.
-Compute interp 3 compute_in_fun2.
+Compute interp 2 (Link test_module open2).
+Compute interp 1 compute_in_fun1.
+Compute interp 1 compute_in_fun2.
+
+Definition bomb := Bind "w" ω Mt.
+Definition bomber := Bind "div" (App (Var "w") (Var "w")) Mt.
+Compute interp 1 (Link bomb (Link bomber Mt)).
+Compute interp 100 (Link (Link bomb bomber) Mt).
 

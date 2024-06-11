@@ -88,28 +88,17 @@ with trans' (t : tm) (k : tm * tm) :=
 Definition CPS (t : tm) := Fn "$kh" (trans' t (Fst (Var "$kh"), Snd (Var "$kh"))).
 
 Local Coercion Var : string >-> tm.
-
 Local Coercion Num : Z >-> tm.
-
-Local Notation "'⟪' M '+' N '⟫'" := (Add M N) (at level 60, right associativity).
-
-Local Notation "'⟪' M ',' N '⟫'" := (Pair M N) (at level 60, right associativity).
-
-Local Notation "'⟪' M '•' '1' '⟫'" := (Fst M) (at level 60, right associativity).
-
-Local Notation "'⟪' M '•' '2' '⟫'" := (Snd M) (at level 60, right associativity).
-
-Local Notation "'⟪' 'λ' x e '⟫'" := (Fn x e) (at level 60, right associativity).
-
-Local Notation "'⟪' 'μ' f x e '⟫'" := (Fnr f x e) (at level 60, right associativity).
-
-Local Notation "'⟪' 'ifp' C 'then' P 'else' N '⟫'" := (Ifp C P N) (at level 60, right associativity).
-
-Local Notation "'⟪' '@' M N '⟫'" := (App M N) (at level 60, right associativity).
-
-Local Notation "'⟪' 'raise' R '⟫'" := (Raise R) (at level 60, right associativity).
-
-Local Notation "'⟪' 'handle' R 'with' x '->' H '⟫'" := (Handle R x H) (at level 60, right associativity).
+Local Notation "'⟪' M '+' N '⟫'" := (Add M N) (at level 60, right associativity, only printing).
+Local Notation "'⟪' M ',' N '⟫'" := (Pair M N) (at level 60, right associativity, only printing).
+Local Notation "'⟪' M '•' '1' '⟫'" := (Fst M) (at level 60, right associativity, only printing).
+Local Notation "'⟪' M '•' '2' '⟫'" := (Snd M) (at level 60, right associativity, only printing).
+Local Notation "'⟪' 'λ' x e '⟫'" := (Fn x e) (at level 60, right associativity, only printing).
+Local Notation "'⟪' 'μ' f x e '⟫'" := (Fnr f x e) (at level 60, right associativity, only printing).
+Local Notation "'⟪' 'ifp' C 'then' P 'else' N '⟫'" := (Ifp C P N) (at level 60, right associativity, only printing).
+Local Notation "'⟪' '@' M N '⟫'" := (App M N) (at level 60, right associativity, only printing).
+Local Notation "'⟪' 'raise' R '⟫'" := (Raise R) (at level 60, right associativity, only printing).
+Local Notation "'⟪' 'handle' R 'with' x '->' H '⟫'" := (Handle R x H) (at level 60, right associativity, only printing).
 
 Definition test :=
   (App
@@ -161,7 +150,7 @@ Definition test3 :=
           (Raise (Num 10))
           (Var "x"))))
     "a"
-    (Add (Var "a") (Var "a")))
+    (Add (Var "a") (Var "a")))%Z
 .
 
 Compute CPS test.
