@@ -99,14 +99,12 @@ Definition eval (link : env -> val -> list val) :=
   | Bind x M N =>
     let foldM acc v :=
       let foldN acc' m :=
-        let foldL acc'' m' :=
-          match m' with
-          | Mod σ => Mod (upd_env σ x v) :: acc''
-          | Shadow_val s => Mod (Env [(x, v)] (Some s)) :: acc''
-          | Clos _ _ _ => acc''
-          end
-        in fold_left foldL (link (Env [(x, v)] (Some Init)) m) acc'
-      in fold_left foldN (eval N) acc
+        match m with
+        | Mod σ => Mod (upd_env σ x v) :: acc'
+        | Shadow_val s => Mod (Env [(x, v)] (Some s)) :: acc'
+        | Clos _ _ _ => acc'
+        end
+      in fold_left foldN (flat_map (link (Env [(x, v)] (Some Init))) (eval N)) acc
     in fold_left foldM (eval M) []
   end%list.
 

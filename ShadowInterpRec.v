@@ -59,6 +59,7 @@ Definition ω := Fn "x" (App (Var "x") (Var "x")).
 Definition ι := Fn "x" (Var "x").
 Definition α := Fn "f" (Fn "x" (App (Var "f") (Var "x"))).
 
+(** Operations for substitution *)
 (* open the bound location i with ℓ *)
 Fixpoint open_loc_wvl (i : nat) (ℓ : loc) (w : wvl) :=
   match w with
@@ -164,77 +165,7 @@ with open_wvl_shdw (i : nat) (u : wvl) (s : shdw) :=
   | Call s v => Call (open_wvl_shdw i u s) (open_wvl_vl i u v)
   end.
 
-(* substitute the free location ℓ for ℓ' *)
-Fixpoint subst_loc_wvl (ν ℓ : loc) (w : wvl) :=
-  match w with
-  | wvl_v v => wvl_v (subst_loc_vl ν ℓ v)
-  | wvl_recv v => wvl_recv (subst_loc_vl ν ℓ v)
-  end
-
-with subst_loc_nv (ν ℓ : loc) (σ : nv) :=
-  match σ with
-  | nv_mt => nv_mt
-  | nv_sh s => nv_sh (subst_loc_shdw ν ℓ s)
-  | nv_bloc x n σ' =>
-    nv_bloc x n (subst_loc_nv ν ℓ σ')
-  | nv_floc x ℓ' σ' =>
-    if Pos.eqb ℓ ℓ'
-    then nv_floc x ν (subst_loc_nv ν ℓ σ')
-    else nv_floc x ℓ' (subst_loc_nv ν ℓ σ')
-  | nv_bval x w σ' =>
-    nv_bval x (subst_loc_wvl ν ℓ w) (subst_loc_nv ν ℓ σ')
-  end
-
-with subst_loc_vl (ν ℓ : loc) (v : vl) :=
-  match v with
-  | vl_sh s => vl_sh (subst_loc_shdw ν ℓ s)
-  | vl_exp σ => vl_exp (subst_loc_nv ν ℓ σ)
-  | vl_clos x k σ => vl_clos x k (subst_loc_nv ν ℓ σ)
-  end
-
-with subst_loc_shdw (ν ℓ : loc) (s : shdw) :=
-  match s with
-  | Init => Init
-  | Read s x => Read (subst_loc_shdw ν ℓ s) x
-  | Call s v => Call (subst_loc_shdw ν ℓ s) (subst_loc_vl ν ℓ v)
-  end.
-
-(* substitute the free location ℓ for u *)
-Fixpoint subst_wvl_wvl (u : wvl) (ℓ : loc) (w : wvl) :=
-  match w with
-  | wvl_v v => wvl_v (subst_wvl_vl u ℓ v)
-  | wvl_recv v => wvl_recv (subst_wvl_vl u ℓ v)
-  end
-
-with subst_wvl_nv (u : wvl) (ℓ : loc) (σ : nv) :=
-  match σ with
-  | nv_mt => nv_mt
-  | nv_sh s => nv_sh (subst_wvl_shdw u ℓ s)
-  | nv_bloc x n σ' =>
-    nv_bloc x n (subst_wvl_nv u ℓ σ')
-  | nv_floc x ℓ' σ' =>
-    if Pos.eqb ℓ ℓ'
-    then nv_bval x u (subst_wvl_nv u ℓ σ')
-    else nv_floc x ℓ' (subst_wvl_nv u ℓ σ')
-  | nv_bval x w σ' =>
-    nv_bval x (subst_wvl_wvl u ℓ w) (subst_wvl_nv u ℓ σ')
-  end
-
-with subst_wvl_vl (u : wvl) (ℓ : loc) (v : vl) :=
-  match v with
-  | vl_sh s => vl_sh (subst_wvl_shdw u ℓ s)
-  | vl_exp σ => vl_exp (subst_wvl_nv u ℓ σ)
-  | vl_clos x k σ => vl_clos x k (subst_wvl_nv u ℓ σ)
-  end
-
-with subst_wvl_shdw (u : wvl) (ℓ : loc) (s : shdw) :=
-  match s with
-  | Init => Init
-  | Read s x => Read (subst_wvl_shdw u ℓ s) x
-  | Call s v => Call (subst_wvl_shdw u ℓ s) (subst_wvl_vl u ℓ v)
-  end.
-
-(* free locations *)
+(* allocate fresh locations *)
 Fixpoint alloc_wvl (w : wvl) :=
   match w with
   | wvl_v v | wvl_recv v => alloc_vl v
