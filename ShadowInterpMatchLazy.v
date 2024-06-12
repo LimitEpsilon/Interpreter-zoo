@@ -119,7 +119,7 @@ Local Notation "'⟪' x ',' n '⟫' ';;' σ " := (nv_bloc x n σ) (at level 60, 
 Local Notation "'⟪' x ',' 'ℓ' ℓ '⟫' ';;' σ " := (nv_floc x ℓ σ) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' w '⟫' ';;' σ " := (nv_bval x w σ) (at level 60, right associativity, only printing).
 Local Notation "'⟪' s '|' 'O' '⤇' vO '|' 'S' '⤇' 'λ' x kS σS '⟫'" := (CaseS s vO x kS σS) (at level 60, right associativity, only printing).
-Local Infix "<$>" := Basics.compose (at level 49).
+Local Infix "<*>" := Basics.compose (at level 49).
 
 Definition lift {A B : Type} (f : A -> option B) (x : option A) :=
   match x with
@@ -165,7 +165,7 @@ with open_loc_shdw (i : nat) (ℓ : loc) (s : shdw) :=
   | SuccS s => SuccS (open_loc_shdw i ℓ s)
   | CaseS s vO x kS σS =>
     CaseS (open_loc_shdw i ℓ s)
-      (lift (Some <$> open_loc_vl i ℓ) vO)
+      (lift (Some <*> open_loc_vl i ℓ) vO)
       x kS (open_loc_nv i ℓ σS)
   end.
 
@@ -206,7 +206,7 @@ with close_shdw (i : nat) (ℓ : loc) (s : shdw) :=
   | SuccS s => SuccS (close_shdw i ℓ s)
   | CaseS s vO x kS σS =>
     CaseS (close_shdw i ℓ s)
-      (lift (Some <$> close_vl i ℓ) vO)
+      (lift (Some <*> close_vl i ℓ) vO)
       x kS (close_nv i ℓ σS)
   end.
 
@@ -247,7 +247,7 @@ with open_wvl_shdw (i : nat) (u : wvl) (s : shdw) :=
   | SuccS s => SuccS (open_wvl_shdw i u s)
   | CaseS s vO x kS σS =>
     CaseS (open_wvl_shdw i u s)
-      (lift (Some <$> open_wvl_vl i u) vO)
+      (lift (Some <*> open_wvl_vl i u) vO)
       x kS (open_wvl_nv i u σS)
   end.
 
@@ -444,7 +444,7 @@ Proof.
   let go :=
   fix link_wvl w (ACC : Acc lt (size_wvl w)) {struct ACC} : option wvl :=
     match w as w' return w = w' -> _ with
-    | wvl_v v => fun _ => lift (Some <$> wvl_v) (link_vl v (Acc_inv ACC _))
+    | wvl_v v => fun _ => lift (Some <*> wvl_v) (link_vl v (Acc_inv ACC _))
     | wvl_recv v =>
       fun _ =>
       let ℓ := alloc_vl v in
@@ -453,8 +453,8 @@ Proof.
     end eq_refl
   with link_vl v (ACC : Acc lt (size_vl v)) {struct ACC} : option vl :=
     match v as v' return v = v' -> _ with
-    | vl_clos x k σ' => fun _ => lift (Some <$> vl_clos x k) (link_nv σ' (Acc_inv ACC _))
-    | vl_exp σ' => fun _ => lift (Some <$> vl_exp) (link_nv σ' (Acc_inv ACC _))
+    | vl_clos x k σ' => fun _ => lift (Some <*> vl_clos x k) (link_nv σ' (Acc_inv ACC _))
+    | vl_exp σ' => fun _ => lift (Some <*> vl_exp) (link_nv σ' (Acc_inv ACC _))
     | vl_sh s => fun _ => link_shdw s (Acc_inv ACC _)
     | vl_nat n => fun _ => Some (vl_nat n)
     end eq_refl
@@ -472,10 +472,10 @@ Proof.
         end
       in lift folds (link_shdw s (Acc_inv ACC _))
     | nv_bloc _ _ _ => (* unreachable *) fun _ => None
-    | nv_floc x ℓ σ' => fun _ => lift (Some <$> nv_floc x ℓ) (link_nv σ' (Acc_inv ACC _))
+    | nv_floc x ℓ σ' => fun _ => lift (Some <*> nv_floc x ℓ) (link_nv σ' (Acc_inv ACC _))
     | nv_bval x w σ' =>
       fun _ =>
-      let foldw w := lift (Some <$> nv_bval x w) (link_nv σ' (Acc_inv ACC _))
+      let foldw w := lift (Some <*> nv_bval x w) (link_nv σ' (Acc_inv ACC _))
       in lift foldw (link_wvl w (Acc_inv ACC _))
     end eq_refl
   with link_shdw s (ACC : Acc lt (size_shdw s)) {struct ACC} : option vl :=
@@ -485,11 +485,7 @@ Proof.
       fun _ =>
       let folds s :=
         match s with
-        | vl_exp σ =>
-          match read_env σ x with
-          | None => None
-          | Some w => Some (unroll w)
-          end
+        | vl_exp σ => lift (Some <*> unroll) (read_env σ x)
         | vl_sh (SuccS _) => None
         | vl_sh s => Some (vl_sh (Read s x))
         | vl_clos _ _ _ | vl_nat _ => None
