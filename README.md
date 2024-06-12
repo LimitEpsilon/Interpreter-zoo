@@ -11,4 +11,5 @@ A CPS transformer and evaluator of a functional language featuring `raise` and `
 - Without recursion, using options ([ShadowInterpOption.v](ShadowInterpOption.v))
 - Without recursion, using lists ([ShadowInterpList.v](ShadowInterpList.v))
 - With recursion, using lists ([ShadowInterpRec.v](ShadowInterpRec.v))
+- With recursion, add Peano naturals ([ShadowInterpMatch.v](ShadowInterpMatch.v))
 

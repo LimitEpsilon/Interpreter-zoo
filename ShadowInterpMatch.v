@@ -476,3 +476,19 @@ Compute interp 1 export_add.
 Compute interp 1 (Link export_add (Var "add")).
 Compute interp 5 (Link export_add three_plus_three).
 
+Definition export_add_sem := Eval cbn in interp 1 export_add.
+Definition three_plus_three_sem := Eval cbn in interp 1 three_plus_three.
+Definition sem_link n (σ : list vl) (v : list vl) :=
+  let foldσ acc σ :=
+    let foldv acc' v :=
+      match σ with
+      | vl_exp σ => link n σ v ++ acc'
+      | vl_sh (SuccS _) | vl_sh (PredS _) => acc'
+      | vl_sh m => link n (nv_sh m) v ++ acc'
+      | vl_clos _ _ _ | vl_nat _ => acc'
+      end%list
+    in fold_left foldv v acc
+  in fold_left foldσ σ [].
+
+Compute sem_link 5 (export_add_sem) (three_plus_three_sem).
+
