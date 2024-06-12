@@ -11,12 +11,12 @@ Inductive tm :=
   | Var (x : var)
   | Fn (x : var) (e : tm)
   | App (f a : tm)
-  | Link (m e : tm)
-  | Mt
-  | Bind (x : var) (v m : tm)
-  | Zero
-  | Succ (n : tm)
-  | Case (e : tm) (z : tm) (n : var) (s : tm)
+  | Link (m e : tm) (* m ⋊ e *)
+  | Mt (* ε *)
+  | Bind (x : var) (v m : tm) (* let rec x = v ; m *)
+  | Zero (* new! *)
+  | Succ (n : tm) (* new! *)
+  | Case (e : tm) (z : tm) (n : var) (s : tm) (* new! *)
     (* match e with 0 => z | S n => s end *)
 .
 
@@ -35,14 +35,14 @@ with vl :=
   | vl_sh (s : shdw)
   | vl_exp (σ : nv)
   | vl_clos (x : var) (k : list vl) (σ : nv)
-  | vl_nat (n : nat)
+  | vl_nat (n : nat) (* new! *)
 
 with shdw :=
   | Init
   | Read (s : shdw) (x : var)
   | Call (s : shdw) (v : vl)
-  | SuccS (s : shdw)
-  | PredS (s : shdw)
+  | SuccS (s : shdw) (* new! *)
+  | PredS (s : shdw) (* new! *)
 .
 
 Scheme wvl_ind_mut := Induction for wvl Sort Prop
@@ -289,8 +289,8 @@ Definition eval (link : nv -> vl -> list vl) :=
         match fn with
         | vl_clos x B σ =>
           flat_map (link (nv_bval x (wvl_v arg) σ)) B ++ acc'
-        | vl_sh fn =>
-          vl_sh (Call fn arg) :: acc'
+        | vl_sh (SuccS _) | vl_sh (PredS _) => acc'
+        | vl_sh fn => vl_sh (Call fn arg) :: acc'
         | vl_exp _ | vl_nat _ => acc'
         end
       in fold_left foldN (eval N) acc
@@ -299,10 +299,9 @@ Definition eval (link : nv -> vl -> list vl) :=
     let foldM acc m :=
       let foldN acc' cli :=
         match m with
-        | vl_exp σ =>
-          link σ cli ++ acc'
-        | vl_sh m =>
-          link (nv_sh m) cli ++ acc'
+        | vl_exp σ => link σ cli ++ acc'
+        | vl_sh (SuccS _) | vl_sh (PredS _) => acc'
+        | vl_sh m => link (nv_sh m) cli ++ acc'
         | vl_clos _ _ _ | vl_nat _ => acc'
         end
       in fold_left foldN (eval N) acc
@@ -314,6 +313,7 @@ Definition eval (link : nv -> vl -> list vl) :=
       let foldN acc' m :=
         match m with
         | vl_exp σ => vl_exp (nv_bval x w σ) :: acc'
+        | vl_sh (SuccS _) | vl_sh (PredS _) => acc'
         | vl_sh s => vl_exp (nv_bval x w (nv_sh s)) :: acc'
         | vl_clos _ _ _ | vl_nat _ => acc'
         end
@@ -382,6 +382,7 @@ Proof.
       let folds acc v :=
         match v with
         | vl_exp σ' => σ' :: acc
+        | vl_sh (SuccS _) | vl_sh (PredS _) => acc
         | vl_sh s' => nv_sh s' :: acc
         | vl_clos _ _ _ | vl_nat _ => acc
         end
@@ -407,6 +408,7 @@ Proof.
           | None => acc
           | Some w => (unroll w) :: acc
           end
+        | vl_sh (SuccS _) | vl_sh (PredS _) => acc
         | vl_sh s => vl_sh (Read s x) :: acc
         | vl_clos _ _ _ | vl_nat _ => acc
         end
@@ -418,8 +420,8 @@ Proof.
           match s with
           | vl_clos x k σ =>
             flat_map (link n (nv_bval x (wvl_v v) σ)) k ++ acc'
-          | vl_sh s =>
-            vl_sh (Call s v) :: acc'
+          | vl_sh (SuccS _) | vl_sh (PredS _) => acc'
+          | vl_sh s => vl_sh (Call s v) :: acc'
           | vl_exp _ | vl_nat _ => acc'
           end
         in fold_left foldv (link_vl v (Acc_inv ACC _)) acc
@@ -457,6 +459,7 @@ Definition interp n := eval (link n).
 Local Coercion wvl_v : vl >-> wvl.
 Local Coercion vl_exp : nv >-> vl.
 Definition three_tm := Succ (Succ (Succ Zero)).
+(* Fixpoint add m n := match m with 0 => n | S m => S (add m n) end *)
 Definition add_tm :=
   (Fn "m"
     (Fn "n"
@@ -469,7 +472,7 @@ Definition export_add := Bind "add" add_tm Mt.
 
 Definition three_plus_three := App (App (Var "add") three_tm) three_tm.
 
-Compute interp 10 export_add.
-Compute interp 10 (Link export_add (Var "add")).
+Compute interp 1 export_add.
+Compute interp 1 (Link export_add (Var "add")).
 Compute interp 5 (Link export_add three_plus_three).
 
