@@ -14,6 +14,10 @@ Inductive tm :=
   | Link (m e : tm)
   | Mt
   | Bind (x : var) (v m : tm)
+  | Zero
+  | Succ (n : tm)
+  | Case (e : tm) (z : tm) (n : var) (s : tm)
+    (* match e with 0 => z | S n => s end *)
 .
 
 Inductive wvl :=
@@ -31,11 +35,14 @@ with vl :=
   | vl_sh (s : shdw)
   | vl_exp (σ : nv)
   | vl_clos (x : var) (k : list vl) (σ : nv)
+  | vl_nat (n : nat)
 
 with shdw :=
   | Init
   | Read (s : shdw) (x : var)
   | Call (s : shdw) (v : vl)
+  | SuccS (s : shdw)
+  | PredS (s : shdw)
 .
 
 Scheme wvl_ind_mut := Induction for wvl Sort Prop
@@ -47,17 +54,13 @@ Combined Scheme pre_val_ind from wvl_ind_mut, nv_ind_mut, vl_ind_mut, shdw_ind_m
 
 Local Notation "'⟨' 'μ' v '⟩'" := (wvl_recv v) (at level 60, right associativity, only printing).
 Local Notation "'⟨' 'λ' x k σ '⟩'" := (vl_clos x k σ) (at level 60, right associativity, only printing).
-Local Notation "'⟨' σ '⟩'" := (vl_exp σ) (at level 60, right associativity, only printing).
 Local Notation "'⟨' s '⟩'" := (vl_sh s) (at level 60, right associativity, only printing).
+Local Notation "'⟨' n '⟩'" := (vl_nat n) (at level 60, right associativity, only printing).
 Local Notation "•" := (nv_mt) (at level 60, right associativity, only printing).
 Local Notation "'⟪' s '⟫'" := (nv_sh s) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' n '⟫' ';;' σ " := (nv_bloc x n σ) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' 'ℓ' ℓ '⟫' ';;' σ " := (nv_floc x ℓ σ) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' w '⟫' ';;' σ " := (nv_bval x w σ) (at level 60, right associativity, only printing).
-
-Definition ω := Fn "x" (App (Var "x") (Var "x")).
-Definition ι := Fn "x" (Var "x").
-Definition α := Fn "f" (Fn "x" (App (Var "f") (Var "x"))).
 
 (** Operations for substitution *)
 (* open the bound location i with ℓ *)
@@ -86,6 +89,7 @@ with open_loc_vl (i : nat) (ℓ : loc) (v : vl) :=
   | vl_sh s => vl_sh (open_loc_shdw i ℓ s)
   | vl_exp σ => vl_exp (open_loc_nv i ℓ σ)
   | vl_clos x k σ => vl_clos x k (open_loc_nv i ℓ σ)
+  | vl_nat n => vl_nat n
   end
 
 with open_loc_shdw (i : nat) (ℓ : loc) (s : shdw) :=
@@ -93,6 +97,8 @@ with open_loc_shdw (i : nat) (ℓ : loc) (s : shdw) :=
   | Init => Init
   | Read s x => Read (open_loc_shdw i ℓ s) x
   | Call s v => Call (open_loc_shdw i ℓ s) (open_loc_vl i ℓ v)
+  | SuccS s => SuccS (open_loc_shdw i ℓ s)
+  | PredS s => PredS (open_loc_shdw i ℓ s)
   end.
 
 (* close the free location ℓ with the binding depth i *)
@@ -121,6 +127,7 @@ with close_vl (i : nat) (ℓ : loc) (v : vl) :=
   | vl_sh s => vl_sh (close_shdw i ℓ s)
   | vl_exp σ => vl_exp (close_nv i ℓ σ)
   | vl_clos x k σ => vl_clos x k (close_nv i ℓ σ)
+  | vl_nat n => vl_nat n
   end
 
 with close_shdw (i : nat) (ℓ : loc) (s : shdw) :=
@@ -128,6 +135,8 @@ with close_shdw (i : nat) (ℓ : loc) (s : shdw) :=
   | Init => Init
   | Read s x => Read (close_shdw i ℓ s) x
   | Call s v => Call (close_shdw i ℓ s) (close_vl i ℓ v)
+  | SuccS s => SuccS (close_shdw i ℓ s)
+  | PredS s => PredS (close_shdw i ℓ s)
   end.
 
 (* open the bound location i with u *)
@@ -156,6 +165,7 @@ with open_wvl_vl (i : nat) (u : wvl) (v : vl) :=
   | vl_sh s => vl_sh (open_wvl_shdw i u s)
   | vl_exp σ => vl_exp (open_wvl_nv i u σ)
   | vl_clos x k σ => vl_clos x k (open_wvl_nv i u σ)
+  | vl_nat n => vl_nat n
   end
 
 with open_wvl_shdw (i : nat) (u : wvl) (s : shdw) :=
@@ -163,6 +173,8 @@ with open_wvl_shdw (i : nat) (u : wvl) (s : shdw) :=
   | Init => Init
   | Read s x => Read (open_wvl_shdw i u s) x
   | Call s v => Call (open_wvl_shdw i u s) (open_wvl_vl i u v)
+  | SuccS s => SuccS (open_wvl_shdw i u s)
+  | PredS s => PredS (open_wvl_shdw i u s)
   end.
 
 (* allocate fresh locations *)
@@ -184,6 +196,7 @@ with alloc_vl (v : vl) :=
   match v with
   | vl_sh s => alloc_shdw s
   | vl_exp σ | vl_clos _ _ σ => alloc_nv σ
+  | vl_nat n => xH
   end
 
 with alloc_shdw (s : shdw) :=
@@ -191,6 +204,8 @@ with alloc_shdw (s : shdw) :=
   | Init => xH
   | Read s x => alloc_shdw s
   | Call s v => Pos.max (alloc_shdw s) (alloc_vl v)
+  | SuccS s => alloc_shdw s
+  | PredS s => alloc_shdw s
   end.
 
 (* term size *)
@@ -212,6 +227,7 @@ with size_vl (v : vl) :=
   match v with
   | vl_sh s => S (size_shdw s)
   | vl_exp σ | vl_clos _ _ σ => S (size_nv σ)
+  | vl_nat _ => O
   end
 
 with size_shdw (s : shdw) :=
@@ -219,6 +235,8 @@ with size_shdw (s : shdw) :=
   | Init => O
   | Read s x => S (size_shdw s)
   | Call s v => S (Nat.max (size_shdw s) (size_vl v))
+  | SuccS s => S (size_shdw s)
+  | PredS s => S (size_shdw s)
   end.
 
 Definition open_loc_size_eq_wvl w :=
@@ -273,7 +291,7 @@ Definition eval (link : nv -> vl -> list vl) :=
           flat_map (link (nv_bval x (wvl_v arg) σ)) B ++ acc'
         | vl_sh fn =>
           vl_sh (Call fn arg) :: acc'
-        | vl_exp _ => acc'
+        | vl_exp _ | vl_nat _ => acc'
         end
       in fold_left foldN (eval N) acc
     in fold_left foldM (eval M) []
@@ -285,7 +303,7 @@ Definition eval (link : nv -> vl -> list vl) :=
           link σ cli ++ acc'
         | vl_sh m =>
           link (nv_sh m) cli ++ acc'
-        | vl_clos _ _ _ => acc'
+        | vl_clos _ _ _ | vl_nat _ => acc'
         end
       in fold_left foldN (eval N) acc
     in fold_left foldM (eval M) []
@@ -297,10 +315,31 @@ Definition eval (link : nv -> vl -> list vl) :=
         match m with
         | vl_exp σ => vl_exp (nv_bval x w σ) :: acc'
         | vl_sh s => vl_exp (nv_bval x w (nv_sh s)) :: acc'
-        | vl_clos _ _ _ => acc'
+        | vl_clos _ _ _ | vl_nat _ => acc'
         end
       in fold_left foldN (flat_map (link (nv_bval x w (nv_sh Init))) (eval N)) acc
     in fold_left foldM (flat_map (link (nv_floc x xH (nv_sh Init))) (eval M)) []
+  | Zero => [vl_nat 0]
+  | Succ N =>
+    let foldN acc n :=
+      match n with
+      | vl_nat n => vl_nat (S n) :: acc
+      | vl_sh s => vl_sh (SuccS s) :: acc
+      | vl_exp _ | vl_clos _ _ _ => acc
+      end
+    in fold_left foldN (eval N) []
+  | Case E M x N =>
+    let foldE acc e :=
+      match e with
+      | vl_nat (S n) =>
+        flat_map (link (nv_bval x (wvl_v (vl_nat n)) (nv_sh Init))) (eval N) ++ acc
+      | vl_sh (SuccS s) =>
+        flat_map (link (nv_bval x (wvl_v (vl_sh s)) (nv_sh Init))) (eval N) ++ acc
+      | vl_sh s =>
+        flat_map (link (nv_bval x (wvl_v (vl_sh (PredS s))) (nv_sh Init))) (eval N) ++ acc
+      | vl_nat O | vl_exp _ | vl_clos _ _ _ => acc
+      end
+    in fold_left foldE (eval E) (eval M)
   end%list.
 
 Ltac t :=
@@ -333,6 +372,7 @@ Proof.
     | vl_clos x k σ' => fun _ => map (vl_clos x k) (link_nv σ' (Acc_inv ACC _))
     | vl_exp σ' => fun _ => map vl_exp (link_nv σ' (Acc_inv ACC _))
     | vl_sh s => fun _ => link_shdw s (Acc_inv ACC _)
+    | vl_nat n => fun _ => [vl_nat n]
     end eq_refl
   with link_nv σ' (ACC : Acc lt (size_nv σ')) {struct ACC} : list nv :=
     match σ' as σ'' return σ' = σ'' -> _ with
@@ -343,7 +383,7 @@ Proof.
         match v with
         | vl_exp σ' => σ' :: acc
         | vl_sh s' => nv_sh s' :: acc
-        | vl_clos _ _ _ => acc
+        | vl_clos _ _ _ | vl_nat _ => acc
         end
       in fold_left folds (link_shdw s (Acc_inv ACC _)) []
     | nv_bloc _ _ _ => (* unreachable *) fun _ => []
@@ -368,7 +408,7 @@ Proof.
           | Some w => (unroll w) :: acc
           end
         | vl_sh s => vl_sh (Read s x) :: acc
-        | vl_clos _ _ _ => acc
+        | vl_clos _ _ _ | vl_nat _ => acc
         end
       in fold_left folds (link_shdw s (Acc_inv ACC _)) []
     | Call s v =>
@@ -380,9 +420,28 @@ Proof.
             flat_map (link n (nv_bval x (wvl_v v) σ)) k ++ acc'
           | vl_sh s =>
             vl_sh (Call s v) :: acc'
-          | vl_exp _ => acc'
+          | vl_exp _ | vl_nat _ => acc'
           end
         in fold_left foldv (link_vl v (Acc_inv ACC _)) acc
+      in fold_left folds (link_shdw s (Acc_inv ACC _)) []
+    | SuccS s =>
+      fun _ =>
+      let folds acc s :=
+        match s with
+        | vl_nat n => vl_nat (S n) :: acc
+        | vl_sh s => vl_sh (SuccS s) :: acc
+        | vl_exp _ | vl_clos _ _ _ => acc
+        end
+      in fold_left folds (link_shdw s (Acc_inv ACC _)) []
+    | PredS s =>
+      fun _ =>
+      let folds acc s :=
+        match s with
+        | vl_nat (S n) => vl_nat n :: acc
+        | vl_sh (SuccS s) => vl_sh s :: acc
+        | vl_sh s => vl_sh (PredS s) :: acc
+        | vl_nat O | vl_exp _ | vl_clos _ _ _ => acc
+        end
       in fold_left folds (link_shdw s (Acc_inv ACC _)) []
     end eq_refl
   for link_vl
@@ -396,23 +455,21 @@ Defined.
 Definition interp n := eval (link n).
 
 Local Coercion wvl_v : vl >-> wvl.
-Local Coercion vl_sh : shdw >-> vl.
 Local Coercion vl_exp : nv >-> vl.
-Compute interp 1 ω.
-Compute interp 100 (App ω ω).
-Compute interp 1 (App ι ι).
-Definition test_module := Bind "app" α (Bind "id" ι Mt).
-Definition open1 := App (Var "id") (Var "id").
-Definition open2 := App (Var "app") (Var "id").
-Definition compute_in_fun1 := Fn "x" (App (App ι ι) (Var "x")).
-Definition compute_in_fun2 := Fn "x" (App ι (App ι (Var "x"))).
-Compute interp 2 (Link test_module open1).
-Compute interp 2 (Link test_module open2).
-Compute interp 1 compute_in_fun1.
-Compute interp 1 compute_in_fun2.
+Definition three_tm := Succ (Succ (Succ Zero)).
+Definition add_tm :=
+  (Fn "m"
+    (Fn "n"
+      (Case (Var "m")
+        (Var "n")
+        "m"
+        (Succ (App (App (Var "add") (Var "m")) (Var "n"))))))
+.
+Definition export_add := Bind "add" add_tm Mt.
 
-Definition bomb := Bind "w" ω Mt.
-Definition bomber := Bind "div" (App (Var "w") (Var "w")) Mt.
-Compute interp 1 (Link bomb (Link bomber Mt)).
-Compute interp 100 (Link (Link bomb bomber) Mt).
+Definition three_plus_three := App (App (Var "add") three_tm) three_tm.
+
+Compute interp 10 export_add.
+Compute interp 10 (Link export_add (Var "add")).
+Compute interp 5 (Link export_add three_plus_three).
 
