@@ -429,10 +429,7 @@ Definition eval (link : nv -> vl -> option vl) :=
       | vl_sh s =>
         let vO := eval M in
         let vS := lift (link (nv_bval x (wvl_v (vl_sh (PredS s))) (nv_sh Init))) (eval N) in
-        match vO, vS with
-        | None, None => None
-        | vO, vS => Some (vl_sh (CaseS s vO vS))
-        end
+        Some (vl_sh (CaseS s vO vS))
       | vl_exp _ | vl_clos _ _ _ => None
       end
     in lift foldE (eval E)
@@ -642,4 +639,10 @@ Compute sem_link 5 (Some (nv_bval "n" (wvl_v (vl_nat 3)) (nv_sh Init)))
 Compute interp 100
   (Link (Bind "+" add_tm (Bind "n" three_tm (Bind "f" (Fn "x" (Var "x")) Mt)))
         unknown_function_and_number).
+
+Compute interp 10
+(App
+  (App add_tm
+    (App (App add_tm (Var "x")) (Succ Zero)))
+    (Succ (Succ Zero))).
 
