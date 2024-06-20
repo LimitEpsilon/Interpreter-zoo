@@ -448,7 +448,6 @@ Ltac t :=
 (* linking, up to n steps *)
 Fixpoint link (n : nat) (σ : nv) : vl -> option vl.
 Proof.
-  set (ν := alloc_nv σ).
   refine (
   match n with 0 => (fun _ => None) | S n =>
   let go :=
@@ -457,7 +456,7 @@ Proof.
     | wvl_v v => fun _ => lift (Some <*> wvl_v) (link_vl v (Acc_inv ACC _))
     | wvl_recv v =>
       fun _ =>
-      let ℓ := Pos.max (alloc_vl v) ν in
+      let ℓ := Pos.max (alloc_vl v) (alloc_nv σ) in
       let recv v := Some (wvl_recv (close_vl 0 ℓ v)) in
       lift recv (link_vl (open_loc_vl 0 ℓ v) (Acc_inv ACC _))
     end eq_refl
@@ -582,13 +581,28 @@ Link (Bind "+"
   Mt) (Var "+")
 .
 
+Definition mult_tm :=
+Link (Bind "×"
+  (Fn "m"
+    (Fn "n"
+      (Case (Var "m") Zero "m"
+        (App
+          (App add_tm (Var "n"))
+          (App
+            (App (Var "×") (Var "m"))
+            (Var "n"))))))
+  Mt) (Var "×")
+.
+
 Definition three_plus_three := App (App add_tm three_tm) three_tm.
+Definition three_times_three := App (App mult_tm three_tm) three_tm.
 
 Definition x_plus_three := App (App add_tm three_tm) (Var "x").
 
 Definition double_x := App (App add_tm (Var "x")) (Var "x").
 
 Compute interp 5 three_plus_three.
+Compute interp 10 three_times_three.
 Compute interp 6 x_plus_three.
 Compute interp 6 double_x.
 Compute interp 100
@@ -648,32 +662,29 @@ Compute interp 10
     (App (App add_tm (Var "x")) (Succ Zero)))
     (Succ (Succ Zero))).
 
+(* even? n = 1 if n is even 0 if n is odd *)
 Definition top_module :=
 Bind "Top"
   (Bind "M1"
-    (Bind "f"
+    (Bind "even?"
       (Fn "x"
         (Case (Var "x") (Succ Zero) "n"
-          (App
-            (App add_tm (Var "n"))
-            (App (Link (Var "Top") (Link (Var "M2") (Var "g"))) (Var "n")))))
+          (App (Link (Var "Top") (Link (Var "M2") (Var "odd?"))) (Var "n"))))
       Mt)
     (Bind "M2"
-      (Bind "g"
+      (Bind "odd?"
         (Fn "y"
           (Case (Var "y") Zero "n"
-            (App
-              (App add_tm (Var "n"))
-              (App (Link (Var "Top") (Link (Var "M1") (Var "f"))) (Var "n")))))
+            (App (Link (Var "Top") (Link (Var "M1") (Var "even?"))) (Var "n"))))
         Mt)
       Mt))
   Mt.
 
 Definition test_mut :=
   Link top_module
-      (Link (Var "Top") (Link (Var "M1") (Var "f"))).
+      (Link (Var "Top") (Link (Var "M1") (Var "even?"))).
 
 Compute interp 10 test_mut.
 
-Compute interp 10 (App test_mut (Succ (Succ Zero))).
+Compute interp 10 (App test_mut (Succ (Succ (Succ Zero)))).
 
