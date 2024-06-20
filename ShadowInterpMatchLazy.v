@@ -602,6 +602,13 @@ Definition unknown_function_and_number :=
 
 Compute interp 5 unknown_function_and_number.
 
+Lemma test :
+  interp 5 unknown_function_and_number =
+  interp 10 unknown_function_and_number.
+Proof.
+  vm_compute. reflexivity.
+Qed.
+
 Definition unknown_function_and_number_sem :=
   Eval vm_compute in
   interp 5 (App (App sum_tm (Var "f")) (Var "n")).

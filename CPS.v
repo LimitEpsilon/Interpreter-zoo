@@ -1,6 +1,15 @@
-From Coq Require Import ZArith String.
+From Coq Require Import Numbers.DecimalString ZArith String.
 
 Local Open Scope string_scope.
+
+Definition string_of_int n :=
+  NilEmpty.string_of_int (Pos.to_int n).
+
+Definition int_of_string s :=
+  match NilEmpty.int_of_string s with
+  | None => None
+  | Some n => Pos.of_int n
+  end.
 
 Inductive tm :=
   | Var (x : string)
@@ -17,72 +26,80 @@ Inductive tm :=
   | Handle (r : tm) (x : string) (h : tm)
 .
 
-Fixpoint trans (t : tm) (κ : (tm -> tm) * tm) :=
+Fixpoint trans (t : tm) (k : (tm -> tm) * tm) :=
   match t with
-  | Var x => (fst κ) (Var x)
-  | Num n => (fst κ) (Num n)
-  | Add M N =>
-    let κM m :=
-      let κN n := (fst κ) (Add m n) in
-      trans N (κN, snd κ)
-    in trans M (κM, snd κ)
+  | Var x => (fst k) (Var x)
+  | Num n => (fst k) (Num n)
+  | Add m n =>
+    let kM m :=
+      let kN n := (fst k) (Add m n) in
+      trans n (kN, snd k)
+    in trans m (kM, snd k)
   | Pair f s =>
-    let κF f :=
-      let κS s := (fst κ) (Pair f s) in
-      trans s (κS, snd κ)
-    in trans f (κF, snd κ)
-  | Fst P =>
-    let κP p := (fst κ) (Fst p) in
-    trans P (κP, snd κ)
-  | Snd P =>
-    let κP p := (fst κ) (Snd p) in
-    trans P (κP, snd κ)
-  | Fn x M => (fst κ) (Fn x (Fn "$kh" (trans' M (Fst (Var "$kh"), Snd (Var "$kh")))))
-  | Fnr f x M => (fst κ) (Fnr f x (Fn "$kh" (trans' M (Fst (Var "$kh"), Snd (Var "$kh")))))
-  | Ifp C P N =>
-    let κC c := Ifp c (trans P κ) (trans N κ)
-    in trans C (κC, snd κ)
-  | App M N =>
-    let κM m :=
-      let κN n := App (App m n) (Pair (Fn "$k" ((fst κ) (Var "$k"))) (snd κ)) in
-      trans N (κN, snd κ)
-    in trans M (κM, snd κ)
-  | Raise R => trans' R (snd κ, snd κ)
-  | Handle R x H => trans R (fst κ, Fn x (trans H κ))
+    let kF f :=
+      let kS s := (fst k) (Pair f s) in
+      trans s (kS, snd k)
+    in trans f (kF, snd k)
+  | Fst p =>
+    let kP p := (fst k) (Fst p) in
+    trans p (kP, snd k)
+  | Snd p =>
+    let kP p := (fst k) (Snd p) in
+    trans p (kP, snd k)
+  | Fn x m =>
+    let kh := "$kh" in
+    (fst k) (Fn x (Fn kh (trans' m (Fst (Var kh), Snd (Var kh)))))
+  | Fnr f x m =>
+    let kh := "$kh" in
+    (fst k) (Fnr f x (Fn kh (trans' m (Fst (Var kh), Snd (Var kh)))))
+  | Ifp c p n =>
+    let kC c := Ifp c (trans p k) (trans n k)
+    in trans c (kC, snd k)
+  | App m n =>
+    let kM m :=
+      let kN n := App (App m n) (Pair (Fn "$k" ((fst k) (Var "$k"))) (snd k)) in
+      trans n (kN, snd k)
+    in trans m (kM, snd k)
+  | Raise r => trans' r (snd k, snd k)
+  | Handle r x h => trans r (fst k, Fn x (trans h k))
   end
 
 with trans' (t : tm) (k : tm * tm) :=
   match t with
   | Var x => App (fst k) (Var x)
   | Num n => App (fst k) (Num n)
-  | Add M N =>
-    let κM m :=
-      let κN n := App (fst k) (Add m n) in
-      trans N (κN, snd k)
-    in trans M (κM, snd k)
+  | Add m n =>
+    let kM m :=
+      let kN n := App (fst k) (Add m n) in
+      trans n (kN, snd k)
+    in trans m (kM, snd k)
   | Pair f s =>
-    let κF f :=
-      let κS s := App (fst k) (Pair f s) in
-      trans s (κS, snd k)
-    in trans f (κF, snd k)
-  | Fst P =>
-    let κP p := App (fst k) (Fst p) in
-    trans P (κP, snd k)
-  | Snd P =>
-    let κP p := App (fst k) (Snd p) in
-    trans P (κP, snd k)
-  | Fn x M => App (fst k) (Fn x (Fn "$kh" (trans' M (Fst (Var "$kh"), Snd (Var "$kh")))))
-  | Fnr f x M => App (fst k) (Fnr f x (Fn "$kh" (trans' M (Fst (Var "$kh"), Snd (Var "$kh")))))
-  | Ifp C P N =>
-    let κC c := Ifp c (trans' P k) (trans' N k)
-    in trans C (κC, snd k)
-  | App M N =>
-    let κM m :=
-      let κN n := App (App m n) (Pair (fst k) (snd k)) in
-      trans N (κN, snd k)
-    in trans M (κM, snd k)
-  | Raise R => trans' R (snd k, snd k)
-  | Handle R x H => trans' R (fst k, Fn x (trans' H k))
+    let kF f :=
+      let kS s := App (fst k) (Pair f s) in
+      trans s (kS, snd k)
+    in trans f (kF, snd k)
+  | Fst p =>
+    let kP p := App (fst k) (Fst p) in
+    trans p (kP, snd k)
+  | Snd p =>
+    let kP p := App (fst k) (Snd p) in
+    trans p (kP, snd k)
+  | Fn x m =>
+    let kh := "$kh" in
+    App (fst k) (Fn x (Fn kh (trans' m (Fst (Var kh), Snd (Var kh)))))
+  | Fnr f x m =>
+    let kh := "$kh" in
+    App (fst k) (Fnr f x (Fn kh (trans' m (Fst (Var kh), Snd (Var kh)))))
+  | Ifp c p n =>
+    let kC c := Ifp c (trans' p k) (trans' n k)
+    in trans c (kC, snd k)
+  | App m n =>
+    let kM m :=
+      let kN n := App (App m n) (Pair (fst k) (snd k)) in
+      trans n (kN, snd k)
+    in trans m (kM, snd k)
+  | Raise r => trans' r (snd k, snd k)
+  | Handle r x h => trans' r (fst k, Fn x (trans' h k))
   end.
 
 Definition CPS (t : tm) := Fn "$kh" (trans' t (Fst (Var "$kh"), Snd (Var "$kh"))).

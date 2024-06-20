@@ -269,7 +269,7 @@ with alloc_nv (σ : nv) :=
   | nv_mt => xH
   | nv_sh s => alloc_shdw s
   | nv_bloc _ _ σ' => alloc_nv σ'
-  | nv_floc _ ℓ σ' => Pos.max ℓ (alloc_nv σ')
+  | nv_floc _ ℓ σ' => Pos.max (Pos.succ ℓ) (alloc_nv σ')
   | nv_bval _ w σ' => Pos.max (alloc_wvl w) (alloc_nv σ')
   end
 
@@ -448,6 +448,7 @@ Ltac t :=
 (* linking, up to n steps *)
 Fixpoint link (n : nat) (σ : nv) : vl -> option vl.
 Proof.
+  set (ν := alloc_nv σ).
   refine (
   match n with 0 => (fun _ => None) | S n =>
   let go :=
@@ -456,7 +457,7 @@ Proof.
     | wvl_v v => fun _ => lift (Some <*> wvl_v) (link_vl v (Acc_inv ACC _))
     | wvl_recv v =>
       fun _ =>
-      let ℓ := alloc_vl v in
+      let ℓ := Pos.max (alloc_vl v) ν in
       let recv v := Some (wvl_recv (close_vl 0 ℓ v)) in
       lift recv (link_vl (open_loc_vl 0 ℓ v) (Acc_inv ACC _))
     end eq_refl
@@ -518,6 +519,7 @@ Proof.
       let folds s :=
         match s with
         | vl_nat n => Some (vl_nat (S n))
+        | vl_sh (PredS s) => Some (vl_sh s)
         | vl_sh s => Some (vl_sh (SuccS s))
         | vl_exp _ | vl_clos _ _ _ => None
         end
@@ -602,7 +604,7 @@ Link (Bind "Σ"
   (Fn "f"
     (Fn "n"
       (Case (Var "n")
-        (App (Var "f") (Var "n"))
+        (App (Var "f") Zero)
         "n"
         (App
           (App (Var "+") (App (Var "f") (Succ (Var "n"))))
@@ -645,4 +647,33 @@ Compute interp 10
   (App add_tm
     (App (App add_tm (Var "x")) (Succ Zero)))
     (Succ (Succ Zero))).
+
+Definition top_module :=
+Bind "Top"
+  (Bind "M1"
+    (Bind "f"
+      (Fn "x"
+        (Case (Var "x") (Succ Zero) "n"
+          (App
+            (App add_tm (Var "n"))
+            (App (Link (Var "Top") (Link (Var "M2") (Var "g"))) (Var "n")))))
+      Mt)
+    (Bind "M2"
+      (Bind "g"
+        (Fn "y"
+          (Case (Var "y") Zero "n"
+            (App
+              (App add_tm (Var "n"))
+              (App (Link (Var "Top") (Link (Var "M1") (Var "f"))) (Var "n")))))
+        Mt)
+      Mt))
+  Mt.
+
+Definition test_mut :=
+  Link top_module
+      (Link (Var "Top") (Link (Var "M1") (Var "f"))).
+
+Compute interp 10 test_mut.
+
+Compute interp 10 (App test_mut (Succ (Succ Zero))).
 
