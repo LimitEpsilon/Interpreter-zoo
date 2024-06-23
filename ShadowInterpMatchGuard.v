@@ -1035,6 +1035,10 @@ Definition sem_link n (σ : trace) (w : trace) :=
   in bind check_module σ.
 
 Module SimpleExamples.
+Definition pred_tm :=
+  Fn "n" (Case (Var "n") [zero_branch (zero_tm Zero); succ_branch "m" (Var "m")])
+.
+
 Definition add_tm :=
 Link (Bind "+"
   (Fn "m"
@@ -1061,6 +1065,10 @@ Link (Bind "×"
   Mt) (Var "×")
 .
 
+Definition infinity :=
+Link (Bind "n" (succ_tm (Var "n")) Mt)
+  (Var "n").
+
 Definition three_plus_three := App (App add_tm three_tm) three_tm.
 Definition three_times_three := App (App mult_tm three_tm) three_tm.
 
@@ -1072,6 +1080,7 @@ Compute get_wal (interp 5 three_plus_three).
 Compute get_wal (interp 10 three_times_three).
 Compute get_wal (interp 6 x_plus_three).
 Compute get_wal (interp 6 double_x).
+Compute get_wal (interp 6 (App pred_tm infinity)).
 
 Compute interp 100
   (App
