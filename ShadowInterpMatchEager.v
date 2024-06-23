@@ -566,9 +566,11 @@ Definition interp n := eval (link n).
 
 Local Coercion wvl_v : vl >-> wvl.
 Local Coercion vl_exp : nv >-> vl.
+
+Module SimpleExamples.
 Definition one_tm := Succ Zero.
-Definition two_tm := Succ (Succ Zero).
-Definition three_tm := Succ (Succ (Succ Zero)).
+Definition two_tm := Succ one_tm.
+Definition three_tm := Succ two_tm.
 (* Fixpoint add m n := match m with 0 => n | S m => S (add m n) end *)
 Definition add_tm :=
 Link (Bind "+"
@@ -661,30 +663,41 @@ Compute interp 10
   (App add_tm
     (App (App add_tm (Var "x")) (Succ Zero)))
     (Succ (Succ Zero))).
+End SimpleExamples.
 
+Module MutExample.
+Import SimpleExamples.
 (* even? n = 1 if n is even 0 if n is odd *)
 Definition top_module :=
 Bind "Top"
-  (Bind "M1"
+  (Bind "Even"
     (Bind "even?"
       (Fn "x"
-        (Case (Var "x") (Succ Zero) "n"
-          (App (Link (Var "Top") (Link (Var "M2") (Var "odd?"))) (Var "n"))))
+        (Case (Var "x") one_tm "n"
+          (App (Link (Var "Top") (Link (Var "Odd") (Var "odd?"))) (Var "n"))))
       Mt)
-    (Bind "M2"
+    (Bind "Odd"
       (Bind "odd?"
         (Fn "y"
           (Case (Var "y") Zero "n"
-            (App (Link (Var "Top") (Link (Var "M1") (Var "even?"))) (Var "n"))))
+            (App (Link (Var "Top") (Link (Var "Even") (Var "even?"))) (Var "n"))))
         Mt)
       Mt))
   Mt.
 
-Definition test_mut :=
+Definition test_even :=
   Link top_module
-      (Link (Var "Top") (Link (Var "M1") (Var "even?"))).
+    (Link (Var "Top") (Link (Var "Even") (Var "even?"))).
+Definition test_odd :=
+  Link top_module
+    (Link (Var "Top") (Link (Var "Odd") (Var "odd?"))).
 
-Compute interp 10 test_mut.
+Compute interp 10 test_even.
 
-Compute interp 10 (App test_mut (Succ (Succ (Succ Zero)))).
+Definition test_num := Succ (Succ (Succ Zero)).
+
+Compute interp 10 (App test_even test_num).
+Compute interp 10 (App test_odd test_num).
+Compute interp 10 (App test_odd (Var "n")).
+End MutExample.
 
