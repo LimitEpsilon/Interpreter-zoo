@@ -88,13 +88,12 @@ Variant cstr_name : nat -> Type :=
   | Zero : cstr_name 0
   | Succ : cstr_name 1
   | Cons : cstr_name 2
-  | One : cstr_name 0
 .
 
 Definition eqb_cstr {m n} (c1 : cstr_name m) (c2 : cstr_name n) :=
   match c1, c2 with
-  | Zero, Zero | Succ, Succ | Cons, Cons | One, One => true
-  | Zero, _ | Succ, _ | Cons, _ | One, _ => false
+  | Zero, Zero | Succ, Succ | Cons, Cons => true
+  | Zero, _ | Succ, _ | Cons, _ => false
   end.
 
 Record cstr_type :=
@@ -284,22 +283,23 @@ Section PRE_VAL_IND.
   Qed.
 End PRE_VAL_IND.
 
-Local Notation "'⟨' 'μ' v '⟩'" := (wvl_recv v) (at level 60, right associativity, only printing).
-Local Notation "'⟨' n '⟩'" := (wvl_bloc n) (at level 60, right associativity, only printing).
-Local Notation "'⟨' v '⟩'" := (wvl_v v) (at level 60, right associativity, only printing).
-Local Notation "'⟨' s '⟩'" := (vl_sh s) (at level 60, right associativity, only printing).
+(* Printing *)
+Local Notation " 'μ' v " := (wvl_recv v) (at level 60, right associativity, only printing).
+Local Notation " v " := (wvl_v v) (at level 60, right associativity, only printing).
+Local Notation " n " := (wvl_bloc n) (at level 60, right associativity, only printing).
+Local Notation " ℓ " := (wvl_floc ℓ) (at level 60, right associativity, only printing).
+
+Local Notation " s " := (vl_sh s) (at level 60, right associativity, only printing).
+Local Notation " σ " := (vl_exp σ) (at level 60, right associativity, only printing).
+Local Notation " name args " := (vl_cstr {| cs_type := {| cs_name := name; cs_arity := _ |}; cs_args := args |})
+  (at level 60, right associativity, only printing).
 Local Notation "'⟨' 'λ' x k σ '⟩'" := (vl_clos x k σ) (at level 60, right associativity, only printing).
+
 Local Notation "•" := (nv_mt) (at level 60, right associativity, only printing).
 Local Notation "'⟪' s '⟫'" := (nv_sh s) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' w '⟫' ';;' σ " := (nv_bd x w σ) (at level 60, right associativity, only printing).
-Local Infix "<*>" := Basics.compose (at level 49).
 
-(* Lifting from Reynolds, Theory of Programming Languages  *)
-Definition lift {A B : Type} (f : A -> option B) (x : option A) :=
-  match x with
-  | None => None
-  | Some x => f x
-  end.
+Local Infix "<*>" := Basics.compose (at level 49).
 
 (** Operations for substitution *)
 (* open the bound location i with ℓ *)
@@ -999,7 +999,6 @@ Fixpoint get_wal t :=
   | Guard _ t => get_wal t
   end%list.
 
-Local Coercion vl_exp : nv >-> vl.
 Definition zero_tm c :=
   Cstr {|
     cs_type := {| cs_name := c; cs_arity := 0 |};
@@ -1026,6 +1025,16 @@ Definition succ_branch x (t : tm) :=
     br_vars := [x]%vec;
     br_body := t
   |}.
+Definition sem_link n (σ : trace) (w : trace) :=
+  let check_module m :=
+    match unroll m with
+    | Some (vl_sh s) => link_trace (link n (nv_sh s)) Wal w
+    | Some (vl_exp σ) => link_trace (link n σ) Wal w
+    | _ => Bot
+    end
+  in bind check_module σ.
+
+Module SimpleExamples.
 Definition add_tm :=
 Link (Bind "+"
   (Fn "m"
@@ -1037,10 +1046,80 @@ Link (Bind "+"
   Mt) (Var "+")
 .
 
-Compute get_wal (interp 10 (App add_tm (zero_tm Zero))).
+Definition mult_tm :=
+Link (Bind "×"
+  (Fn "m"
+    (Fn "n"
+      (Case (Var "m")
+        [zero_branch (Var "m");
+        succ_branch "m"
+        (App
+          (App add_tm (Var "n"))
+          (App
+            (App (Var "×") (Var "m"))
+            (Var "n")))])))
+  Mt) (Var "×")
+.
 
-Compute get_wal
-  (interp 10 (App (App add_tm (zero_tm Zero)) (zero_tm Zero))).
+Definition three_plus_three := App (App add_tm three_tm) three_tm.
+Definition three_times_three := App (App mult_tm three_tm) three_tm.
+
+Definition x_plus_three := App (App add_tm three_tm) (Var "x").
+
+Definition double_x := App (App add_tm (Var "x")) (Var "x").
+
+Compute get_wal (interp 5 three_plus_three).
+Compute get_wal (interp 10 three_times_three).
+Compute get_wal (interp 6 x_plus_three).
+Compute get_wal (interp 6 double_x).
+
+Compute interp 100
+  (App
+    (App add_tm
+      (App
+        (App add_tm one_tm)
+        two_tm))
+    (Var "x")).
+
+Definition sum_tm :=
+Link (Bind "Σ"
+  (Fn "f"
+    (Fn "n"
+      (Case (Var "n")
+        [zero_branch (App (Var "f") (zero_tm Zero));
+        succ_branch "n"
+        (App
+          (App (Var "+") (App (Var "f") (succ_tm (Var "n"))))
+          (App
+            (App (Var "Σ") (Var "f"))
+            (Var "n")))])))
+  Mt) (Var "Σ").
+
+Definition unknown_function :=
+  App (App sum_tm (Var "f")) three_tm.
+
+Compute interp 5 unknown_function.
+
+Definition unknown_function_and_number :=
+  App (App sum_tm (Var "f")) (Var "n").
+
+Definition export_function_number :=
+  Bind "f" (Fn "n" (App (App add_tm (Var "n")) one_tm))
+    (Bind "n" three_tm
+      (Bind "+" add_tm Mt)).
+
+Definition export_function_number_sem :=
+  Eval vm_compute in
+  interp 10 export_function_number.
+
+Definition unknown_function_and_number_sem :=
+  Eval vm_compute in
+  interp 10 unknown_function_and_number.
+
+Compute get_wal (sem_link 10
+  export_function_number_sem
+  unknown_function_and_number_sem).
+End SimpleExamples.
 
 Module MutExample.
 (* even? n = 1 if n is even 0 if n is odd *)
@@ -1050,7 +1129,7 @@ Bind "Top"
     (Bind "even?"
       (Fn "x"
         (Case (Var "x")
-          [zero_branch (zero_tm One);
+          [zero_branch one_tm;
           succ_branch "n" (App (Link (Var "Top") (Link (Var "Odd") (Var "odd?"))) (Var "n"))]
         ))
       Mt)
@@ -1072,14 +1151,13 @@ Definition test_odd :=
   Link top_module
     (Link (Var "Top") (Link (Var "Odd") (Var "odd?"))).
 
-Compute get_wal (interp 10 top_module).
-
-Compute get_wal (interp 10 test_even).
-
 Definition test_num := three_tm.
 
 Compute get_wal (interp 10 (App test_even test_num)).
 Compute get_wal (interp 10 (App test_odd test_num)).
-Compute get_wal (interp 10 (App test_odd (Var "n"))).
+Eval vm_compute in
+  let σ := interp 10 (Bind "n" (zero_tm Zero) Mt) in
+  let w := interp 10 (App test_odd (Var "n")) in
+  get_wal (sem_link 10 σ w).
 End MutExample.
 
