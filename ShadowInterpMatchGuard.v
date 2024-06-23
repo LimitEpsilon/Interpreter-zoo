@@ -887,9 +887,9 @@ Proof.
     | nv_sh s => fun _ =>
       filter_env (link_shdw s (Acc_inv ACC _))
     | nv_bd x w σ' => fun _ =>
-      bd_trace x
-        (link_wvl w (Acc_inv ACC _))
-        (link_nv σ' (Acc_inv ACC _))
+      let bound := link_wvl w (Acc_inv ACC _) in
+      let exp := link_nv σ' (Acc_inv ACC _) in
+      bd_trace x bound exp
     end eq_refl
   with link_shdw s (ACC : Acc lt (size_shadow s)) {struct ACC} : trace :=
     match s as s' return s = s' -> _ with
@@ -911,39 +911,67 @@ Proof.
   all: abstract t.
 Defined.
 
+Definition sem_link (link : env -> walue -> trace) (σ w : trace) :=
+  let check_module m :=
+    match unroll m with
+    | Some (vl_sh s) => link_trace (link (nv_sh s)) Wal w
+    | Some (vl_exp σ) => link_trace (link σ) Wal w
+    | _ => Bot
+    end
+  in bind check_module σ.
+
+(* precondition : bd, exp has no free locations *)
+Definition sem_bind (link : env -> walue -> trace) x (bd exp : trace) :=
+  let check_bd w :=
+    match unroll w with
+    | Some v =>
+      let w := wvl_recv (close_value 0 xH v) in
+      let check_exp σ :=
+        match unroll σ with
+        | Some (vl_sh s) => Wal (wvl_v (vl_exp (nv_bd x w (nv_sh s))))
+        | Some (vl_exp σ) => Wal (wvl_v (vl_exp (nv_bd x w σ)))
+        | _ => Bot
+        end
+      in link_trace (link (nv_bd x w (nv_sh Init))) check_exp exp
+    | None => Bot
+    end
+  in link_trace (link (nv_bd x (wvl_floc xH) (nv_sh Init))) check_bd bd.
+
+Definition sem_case (link : env -> walue -> trace) (matched : trace) (branches : list (@branch trace)) :=
+  let check_match m :=
+    match unroll m with
+    | Some (vl_sh s) =>
+      let map_each b :=
+        let body := link_trace (link (dstr_shadow s b)) Wal b.(br_body)
+        in (b.(br_cstr), body)
+      in Match s (List.map map_each branches)
+    | Some (vl_cstr c) =>
+      let fold_each acc b :=
+        match acc with
+        | None =>
+          match dstr_cstr c b with
+          | None => None
+          | Some σ => Some (link_trace (link σ) Wal b.(br_body))
+          end
+        | Some t => Some t
+        end
+      in match List.fold_left fold_each branches None with
+      | None => Bot
+      | Some t => t
+      end
+    | _ => Bot
+    end
+  in bind check_match matched.
+
 Definition eval (link : env -> walue -> trace) :=
   fix eval (e : tm) : trace :=
   match e with
   | Var x => Guard (nv_sh Init) (Wal (wvl_v (vl_sh (Read Init x))))
   | Fn x M => Guard (nv_sh Init) (Wal (wvl_v (vl_clos x (eval M) (nv_sh Init))))
   | App M N => call_trace link (eval M) (eval N)
-  | Link M N =>
-    let client := eval N in
-    let check_module m :=
-      match unroll m with
-      | Some (vl_sh s) => link_trace (link (nv_sh s)) Wal client
-      | Some (vl_exp σ) => link_trace (link σ) Wal client
-      | _ => Bot
-      end
-    in bind check_module (eval M)
+  | Link M N => sem_link link (eval M) (eval N)
   | Mt => Guard (nv_sh Init) (Wal (wvl_v (vl_exp nv_mt)))
-  | Bind x M N =>
-    let bd := eval M in
-    let exp := eval N in
-    let check_bd w :=
-      match unroll w with
-      | Some v =>
-        let w := wvl_recv (close_value 0 xH v) in
-        let check_exp σ :=
-          match unroll σ with
-          | Some (vl_sh s) => Wal (wvl_v (vl_exp (nv_bd x w (nv_sh s))))
-          | Some (vl_exp σ) => Wal (wvl_v (vl_exp (nv_bd x w σ)))
-          | _ => Bot
-          end
-        in link_trace (link (nv_bd x w (nv_sh Init))) check_exp exp
-      | None => Bot
-      end
-    in link_trace (link (nv_bd x (wvl_floc xH) (nv_sh Init))) check_bd bd
+  | Bind x M N => sem_bind link x (eval M) (eval N)
   | Cstr c =>
     cstr_trace
       {|
@@ -958,36 +986,14 @@ Definition eval (link : env -> walue -> trace) :=
           br_cstr := b.(br_cstr);
           br_vars := b.(br_vars);
           br_body := eval b.(br_body);
-        |} in
-      List.map for_each B in
-    let check_match m :=
-      match unroll m with
-      | Some (vl_sh s) =>
-        let for_each b :=
-          let body := link_trace (link (dstr_shadow s b)) Wal b.(br_body)
-          in (b.(br_cstr), body)
-        in Match s (List.map for_each branches)
-      | Some (vl_cstr c) =>
-        let fold_each acc b :=
-          match acc with
-          | None =>
-            match dstr_cstr c b with
-            | None => None
-            | Some σ => Some (link_trace (link σ) Wal b.(br_body))
-            end
-          | Some t => Some t
-          end
-        in match List.fold_left fold_each branches None with
-        | None => Bot
-        | Some t => t
-        end
-      | _ => Bot
-      end
-    in bind check_match matched
+        |}
+      in List.map for_each B
+    in sem_case link matched branches
   end.
 
 Definition interp n := eval (link n).
 
+(* examples *)
 Fixpoint get_wal t :=
   match t with
   | Bot => []
@@ -1025,14 +1031,6 @@ Definition succ_branch x (t : tm) :=
     br_vars := [x]%vec;
     br_body := t
   |}.
-Definition sem_link n (σ : trace) (w : trace) :=
-  let check_module m :=
-    match unroll m with
-    | Some (vl_sh s) => link_trace (link n (nv_sh s)) Wal w
-    | Some (vl_exp σ) => link_trace (link n σ) Wal w
-    | _ => Bot
-    end
-  in bind check_module σ.
 
 Module SimpleExamples.
 Definition pred_tm :=
@@ -1119,15 +1117,21 @@ Definition export_function_number :=
 
 Definition export_function_number_sem :=
   Eval vm_compute in
-  interp 10 export_function_number.
+  interp 4 export_function_number.
 
 Definition unknown_function_and_number_sem :=
   Eval vm_compute in
   interp 10 unknown_function_and_number.
 
-Compute get_wal (sem_link 10
+Compute get_wal (sem_link (link 10)
   export_function_number_sem
   unknown_function_and_number_sem).
+
+Definition ω := Fn "x" (App (Var "x") (Var "x")).
+Definition bomb := Bind "w" ω Mt.
+Definition bomber := Bind "div" (App (Var "w") (Var "w")) Mt.
+Compute interp 10 (Link bomb (Link bomber Mt)).
+Compute interp 10 (Link (Link bomb bomber) Mt).
 End SimpleExamples.
 
 Module MutExample.
@@ -1160,13 +1164,13 @@ Definition test_odd :=
   Link top_module
     (Link (Var "Top") (Link (Var "Odd") (Var "odd?"))).
 
-Definition test_num := three_tm.
+Definition test_num := succ_tm (three_tm).
 
 Compute get_wal (interp 10 (App test_even test_num)).
 Compute get_wal (interp 10 (App test_odd test_num)).
 Eval vm_compute in
-  let σ := interp 10 (Bind "n" (zero_tm Zero) Mt) in
+  let σ := interp 10 (Bind "n" test_num Mt) in
   let w := interp 10 (App test_odd (Var "n")) in
-  get_wal (sem_link 10 σ w).
+  get_wal (sem_link (link 10) σ w).
 End MutExample.
 
