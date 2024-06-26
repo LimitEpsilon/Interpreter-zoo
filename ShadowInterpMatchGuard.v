@@ -299,6 +299,11 @@ Local Notation "•" := (nv_mt) (at level 60, right associativity, only printing
 Local Notation "'⟪' s '⟫'" := (nv_sh s) (at level 60, right associativity, only printing).
 Local Notation "'⟪' x ',' w '⟫' ';;' σ " := (nv_bd x w σ) (at level 60, right associativity, only printing).
 
+Local Notation "⊥" := (Bot) (at level 60, right associativity, only printing).
+Local Notation "w" := (Wal w) (at level 60, right associativity, only printing).
+Local Notation "s '→' c" := (Match s c) (at level 60, right associativity, only printing).
+Local Notation "s '→' c" := (Guard s c) (at level 60, right associativity, only printing).
+
 Local Infix "<*>" := Basics.compose (at level 49).
 
 (** Operations for substitution *)
@@ -558,13 +563,17 @@ Proof.
   f_equal. auto using open_loc_size_eq_vec.
 Qed.
 
-Fixpoint read_env (σ : env) (x : var) :=
-  match σ with
-  | nv_mt => None
-  | nv_sh s => Some (wvl_v (vl_sh (Read s x)))
-  | nv_bd x' w σ' =>
-    if x =? x' then Some w else read_env σ' x
-  end.
+Definition read_env (σ : env) (x : var) :=
+  let fix read σ (acc : env -> env) :=
+    match σ with
+    | nv_mt => None
+    | nv_sh s => Some (wvl_v (vl_sh (Read s x)), acc nv_mt)
+    | nv_bd x' w' σ' =>
+      if x =? x' then Some (w', acc σ') else
+      let acc' σ' := acc (nv_bd x' w' σ')
+      in read σ' acc'
+    end
+  in read σ id.
 
 Definition unroll (w : walue) : option value :=
   match w with
@@ -761,7 +770,7 @@ Definition read_trace x :=
     | Some (vl_sh s) => Wal (wvl_v (vl_sh (Read s x)))
     | Some (vl_exp σ) =>
       match read_env σ x with
-      | Some w => Wal w
+      | Some (w, σ) => Guard σ (Wal w)
       | None => Bot
       end
     | _ => Bot
@@ -801,8 +810,8 @@ Definition bd_trace x (w : trace) (σ : trace) :=
       | Some (vl_exp σ) => Wal (wvl_v (vl_exp (nv_bd x w σ)))
       | _ => Bot
       end
-    in bind check_mod σ in
-  bind check_bd w.
+    in bind check_mod σ
+  in bind check_bd w.
 
 Definition clos_trace x k :=
   let clos w :=
@@ -965,12 +974,13 @@ Definition sem_case (link : env -> walue -> trace) (matched : trace) (branches :
 
 Definition eval (link : env -> walue -> trace) :=
   fix eval (e : tm) : trace :=
+  let guard := Guard (nv_sh Init) in
   match e with
-  | Var x => Guard (nv_sh Init) (Wal (wvl_v (vl_sh (Read Init x))))
-  | Fn x M => Guard (nv_sh Init) (Wal (wvl_v (vl_clos x (eval M) (nv_sh Init))))
+  | Var x => Wal (wvl_v (vl_sh (Read Init x)))
+  | Fn x M => Wal (wvl_v (vl_clos x (eval M) (nv_sh Init)))
   | App M N => call_trace link (eval M) (eval N)
   | Link M N => sem_link link (eval M) (eval N)
-  | Mt => Guard (nv_sh Init) (Wal (wvl_v (vl_exp nv_mt)))
+  | Mt => guard (Wal (wvl_v (vl_exp nv_mt)))
   | Bind x M N => sem_bind link x (eval M) (eval N)
   | Cstr c =>
     cstr_trace
@@ -1126,6 +1136,17 @@ Definition unknown_function_and_number_sem :=
 Compute get_wal (sem_link (link 10)
   export_function_number_sem
   unknown_function_and_number_sem).
+
+Compute
+  let l := get_wal (interp 10
+    (Fn "n" (App (App add_tm (Var "n")) one_tm)))
+  in
+  let for_each w :=
+    match w with
+    | wvl_v (vl_clos _ k _) => get_wal k
+    | _ => []
+    end
+  in List.map for_each l.
 
 Definition ω := Fn "x" (App (Var "x") (Var "x")).
 Definition bomb := Bind "w" ω Mt.
