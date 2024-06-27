@@ -1,0 +1,8 @@
+(library
+ (name modular_interpreter))
+
+(ocamllex lexer)
+
+(menhir
+ (modules parser)
+ (flags --dump --explain))

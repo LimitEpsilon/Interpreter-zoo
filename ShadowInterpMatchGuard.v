@@ -2,8 +2,8 @@ From Coq Require Import PArith Arith Lia String List.
 Import ListNotations.
 
 Local Open Scope string_scope.
-Unset Elimination Schemes.
-Set Primitive Projections.
+Local Unset Elimination Schemes.
+Local Set Primitive Projections.
 
 Definition var := string.
 Definition loc := positive.
@@ -283,6 +283,7 @@ Section PRE_VAL_IND.
   Qed.
 End PRE_VAL_IND.
 
+Module ValNotations.
 (* Printing *)
 Local Notation " 'μ' v " := (wvl_recv v) (at level 60, right associativity, only printing).
 Local Notation " v " := (wvl_v v) (at level 60, right associativity, only printing).
@@ -293,6 +294,8 @@ Local Notation " s " := (vl_sh s) (at level 60, right associativity, only printi
 Local Notation " σ " := (vl_exp σ) (at level 60, right associativity, only printing).
 Local Notation " name args " := (vl_cstr {| cs_type := {| cs_name := name; cs_arity := _ |}; cs_args := args |})
   (at level 60, right associativity, only printing).
+Local Notation " name ',' idx " := {| ds_type := {| cs_name := name; cs_arity := _ |}; ds_idx := idx; ds_valid := _ |}
+  (at level 60, right associativity, only printing).
 Local Notation "'⟨' 'λ' x k σ '⟩'" := (vl_clos x k σ) (at level 60, right associativity, only printing).
 
 Local Notation "•" := (nv_mt) (at level 60, right associativity, only printing).
@@ -301,10 +304,9 @@ Local Notation "'⟪' x ',' w '⟫' ';;' σ " := (nv_bd x w σ) (at level 60, ri
 
 Local Notation "⊥" := (Bot) (at level 60, right associativity, only printing).
 Local Notation "w" := (Wal w) (at level 60, right associativity, only printing).
-Local Notation "s '→' c" := (Match s c) (at level 60, right associativity, only printing).
-Local Notation "s '→' c" := (Guard s c) (at level 60, right associativity, only printing).
-
-Local Infix "<*>" := Basics.compose (at level 49).
+Local Notation "s '→' b" := (Match s b) (at level 60, right associativity, only printing).
+Local Notation "σ '→' t" := (Guard σ t) (at level 60, right associativity, only printing).
+End ValNotations.
 
 (** Operations for substitution *)
 (* open the bound location i with ℓ *)
@@ -1090,13 +1092,13 @@ Compute get_wal (interp 6 x_plus_three).
 Compute get_wal (interp 6 double_x).
 Compute get_wal (interp 6 (App pred_tm infinity)).
 
-Compute interp 100
+Compute get_wal (interp 100
   (App
     (App add_tm
       (App
         (App add_tm one_tm)
         two_tm))
-    (Var "x")).
+    (Var "x"))).
 
 Definition sum_tm :=
 Link (Bind "Σ"
