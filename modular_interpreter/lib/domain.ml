@@ -260,7 +260,7 @@ let print_trace = string_of_trace 0
 let string_of_filters (filters : (string * shadow) list) (w : walue) =
   let fold acc (c, s) =
     let filter = c ^ " ⤇ " ^ print_shadow s in
-    if acc = "" then filter else acc ^ " | " ^ filter
+    if acc = "" then filter else acc ^ " ∧ " ^ filter
   in
   let filters = List.fold_left fold "" filters in
   if filters = "" then print_walue w else filters ^ " ⇒ " ^ print_walue w
