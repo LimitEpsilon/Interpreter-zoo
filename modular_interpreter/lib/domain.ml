@@ -20,7 +20,7 @@ type ('wvl, 'k) vl =
 type 'k wvl =
   | Wvl_v of ('k wvl, 'k) vl
   | Wvl_recv of ('k wvl, 'k) vl
-  | Wvl_bloc of nat
+  | Wvl_bloc of int
   | Wvl_floc of loc
 
 type trace =
@@ -51,128 +51,128 @@ let case s b = Match (s, b)
 let guard ctx t = Guard (ctx, t)
 
 (** val open_loc_shdw :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> shadow -> shadow **)
+    (int -> loc -> walue -> walue) -> int -> loc -> shadow -> shadow **)
 
-let rec open_loc_shdw (f : nat -> loc -> walue -> walue) i l = function
+let rec open_loc_shdw (f : int -> loc -> walue -> walue) i l = function
   | Init -> Init
   | Read (s, x) -> Read (open_loc_shdw f i l s, x)
   | Call (s, w) -> Call (open_loc_shdw f i l s, f i l w)
   | Dstr (s, d) -> Dstr (open_loc_shdw f i l s, d)
 
 (** val open_loc_nv :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> env -> walue nv **)
+    (int -> loc -> walue -> walue) -> int -> loc -> env -> walue nv **)
 
-let rec open_loc_nv (f : nat -> loc -> walue -> walue) i l = function
+let rec open_loc_nv (f : int -> loc -> walue -> walue) i l = function
   | Nv_mt -> Nv_mt
   | Nv_sh s -> Nv_sh (open_loc_shdw f i l s)
   | Nv_bd (x, w, ctx') -> Nv_bd (x, f i l w, open_loc_nv f i l ctx')
 
 (** val open_loc_vl :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> value -> (walue, trace) vl **)
+    (int -> loc -> walue -> walue) -> int -> loc -> value -> (walue, trace) vl **)
 
-let open_loc_vl (f : nat -> loc -> walue -> walue) i l = function
+let open_loc_vl (f : int -> loc -> walue -> walue) i l = function
   | Vl_exp ctx -> (Vl_exp (open_loc_nv f i l ctx) : value)
   | Vl_sh s -> Vl_sh (open_loc_shdw f i l s)
   | Vl_clos (x, k, ctx) -> Vl_clos (x, k, open_loc_nv f i l ctx)
   | Vl_cstr c ->
       Vl_cstr { cs_type = c.cs_type; cs_args = List.map (f i l) c.cs_args }
 
-(** val open_loc_walue : nat -> loc -> walue -> walue **)
+(** val open_loc_walue : int -> loc -> walue -> walue **)
 
 let rec open_loc_walue i l (w : walue) =
   let open_loc_vl = open_loc_vl open_loc_walue in
   match w with
   | Wvl_v v -> Wvl_v (open_loc_vl i l v)
-  | Wvl_recv v -> Wvl_recv (open_loc_vl (S i) l v)
+  | Wvl_recv v -> Wvl_recv (open_loc_vl (i + 1) l v)
   | Wvl_bloc n -> (
-      match Nat.eqb i n with true -> Wvl_floc l | false -> Wvl_bloc n)
+      match Int.equal i n with true -> Wvl_floc l | false -> Wvl_bloc n)
   | Wvl_floc l -> Wvl_floc l
 
-(** val open_loc_value : nat -> loc -> value -> (walue, trace) vl **)
+(** val open_loc_value : int -> loc -> value -> (walue, trace) vl **)
 
 let open_loc_value = open_loc_vl open_loc_walue
 
 (** val close_shdw :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> shadow -> shadow **)
+    (int -> loc -> walue -> walue) -> int -> loc -> shadow -> shadow **)
 
-let rec close_shdw (f : nat -> loc -> walue -> walue) i l = function
+let rec close_shdw (f : int -> loc -> walue -> walue) i l = function
   | Init -> Init
   | Read (s, x) -> Read (close_shdw f i l s, x)
   | Call (s, w) -> Call (close_shdw f i l s, f i l w)
   | Dstr (s, d) -> Dstr (close_shdw f i l s, d)
 
 (** val close_nv :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> env -> env **)
+    (int -> loc -> walue -> walue) -> int -> loc -> env -> env **)
 
-let rec close_nv (f : nat -> loc -> walue -> walue) i l = function
+let rec close_nv (f : int -> loc -> walue -> walue) i l = function
   | Nv_mt -> Nv_mt
   | Nv_sh s -> Nv_sh (close_shdw f i l s)
   | Nv_bd (x, w, ctx') -> Nv_bd (x, f i l w, close_nv f i l ctx')
 
 (** val close_vl :
-    (nat -> loc -> walue -> walue) -> nat -> loc -> value -> value **)
+    (int -> loc -> walue -> walue) -> int -> loc -> value -> value **)
 
-let close_vl (f : nat -> loc -> walue -> walue) i l = function
+let close_vl (f : int -> loc -> walue -> walue) i l = function
   | Vl_exp ctx -> (Vl_exp (close_nv f i l ctx) : value)
   | Vl_sh s -> Vl_sh (close_shdw f i l s)
   | Vl_clos (x, k, ctx) -> Vl_clos (x, k, close_nv f i l ctx)
   | Vl_cstr c ->
       Vl_cstr { cs_type = c.cs_type; cs_args = List.map (f i l) c.cs_args }
 
-(** val close_walue : nat -> loc -> walue -> walue **)
+(** val close_walue : int -> loc -> walue -> walue **)
 
 let rec close_walue i l (w : walue) =
   let close_vl = close_vl close_walue in
   match w with
   | Wvl_v v -> Wvl_v (close_vl i l v)
-  | Wvl_recv v -> Wvl_recv (close_vl (S i) l v)
+  | Wvl_recv v -> Wvl_recv (close_vl (i + 1) l v)
   | Wvl_bloc n -> Wvl_bloc n
   | Wvl_floc l' -> (
       match Pos.eqb l l' with true -> Wvl_bloc i | false -> Wvl_floc l')
 
-(** val close_value : nat -> loc -> value -> value **)
+(** val close_value : int -> loc -> value -> value **)
 
 let close_value = close_vl close_walue
 
 (** val open_wvl_shdw :
-    (nat -> walue -> walue -> walue) -> nat -> walue -> shadow -> shadow **)
+    (int -> walue -> walue -> walue) -> int -> walue -> shadow -> shadow **)
 
-let rec open_wvl_shdw (f : nat -> walue -> walue -> walue) i u = function
+let rec open_wvl_shdw (f : int -> walue -> walue -> walue) i u = function
   | Init -> Init
   | Read (s, x) -> Read (open_wvl_shdw f i u s, x)
   | Call (s, w) -> Call (open_wvl_shdw f i u s, f i u w)
   | Dstr (s, d) -> Dstr (open_wvl_shdw f i u s, d)
 
 (** val open_wvl_nv :
-    (nat -> walue -> walue -> walue) -> nat -> walue -> env -> walue nv **)
+    (int -> walue -> walue -> walue) -> int -> walue -> env -> walue nv **)
 
-let rec open_wvl_nv (f : nat -> walue -> walue -> walue) i u = function
+let rec open_wvl_nv (f : int -> walue -> walue -> walue) i u = function
   | Nv_mt -> Nv_mt
   | Nv_sh s -> Nv_sh (open_wvl_shdw f i u s)
   | Nv_bd (x, w, ctx') -> Nv_bd (x, f i u w, open_wvl_nv f i u ctx')
 
 (** val open_wvl_vl :
-    (nat -> walue -> walue -> walue) -> nat -> walue -> value -> (walue,
+    (int -> walue -> walue -> walue) -> int -> walue -> value -> (walue,
     trace) vl **)
 
-let open_wvl_vl (f : nat -> walue -> walue -> walue) i u = function
+let open_wvl_vl (f : int -> walue -> walue -> walue) i u = function
   | Vl_exp ctx -> (Vl_exp (open_wvl_nv f i u ctx) : value)
   | Vl_sh s -> Vl_sh (open_wvl_shdw f i u s)
   | Vl_clos (x, k, ctx) -> Vl_clos (x, k, open_wvl_nv f i u ctx)
   | Vl_cstr c ->
       Vl_cstr { cs_type = c.cs_type; cs_args = List.map (f i u) c.cs_args }
 
-(** val open_wvl_walue : nat -> walue -> walue -> walue **)
+(** val open_wvl_walue : int -> walue -> walue -> walue **)
 
 let rec open_wvl_walue i u w =
   let open_wvl_vl = open_wvl_vl open_wvl_walue in
   match w with
   | Wvl_v v -> Wvl_v (open_wvl_vl i u v)
-  | Wvl_recv v -> Wvl_recv (open_wvl_vl (S i) u v)
-  | Wvl_bloc n -> ( match Nat.eqb i n with true -> u | false -> Wvl_bloc n)
+  | Wvl_recv v -> Wvl_recv (open_wvl_vl (i + 1) u v)
+  | Wvl_bloc n -> ( match Int.equal i n with true -> u | false -> Wvl_bloc n)
   | Wvl_floc l -> Wvl_floc l
 
-(** val open_wvl_value : nat -> walue -> value -> (walue, trace) vl **)
+(** val open_wvl_value : int -> walue -> value -> (walue, trace) vl **)
 
 let open_wvl_value = open_wvl_vl open_wvl_walue
 
@@ -219,7 +219,6 @@ let alloc_value = alloc_vl alloc_walue
 (** val alloc_env : env -> positive **)
 
 let alloc_env = alloc_nv alloc_walue
-let rec int_of_nat = function O -> 0 | S n -> int_of_nat n + 1
 
 let rec print_shadow : shadow -> string = function
   | Init -> "Init"
@@ -251,7 +250,7 @@ and print_value : value -> string = function
 and print_walue : walue -> string = function
   | Wvl_v v -> print_value v
   | Wvl_recv v -> "μ." ^ print_value v
-  | Wvl_bloc n -> string_of_int (int_of_nat n)
+  | Wvl_bloc n -> string_of_int n
   | Wvl_floc _ -> "ℓ"
 
 let rec string_of_trace (lvl : int) : trace -> string = function

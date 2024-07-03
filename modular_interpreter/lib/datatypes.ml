@@ -1,18 +1,8 @@
-type nat = O | S of nat
 type comparison = Eq | Lt | Gt
 
 let id : 'a -> 'a = fun x -> x
 
 type positive = XI of positive | XO of positive | XH
-
-module Nat = struct
-  (** val eqb : nat -> nat -> bool **)
-
-  let rec eqb n m =
-    match n with
-    | O -> ( match m with O -> true | S _ -> false)
-    | S n' -> ( match m with O -> false | S m' -> eqb n' m')
-end
 
 module Pos = struct
   (** val succ : positive -> positive **)
