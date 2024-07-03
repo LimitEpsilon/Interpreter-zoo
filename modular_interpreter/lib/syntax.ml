@@ -62,7 +62,7 @@ let rec string_of_tm lvl t =
   | Link (e1, e2) ->
       indent lvl ^ "LINK (\n"
       ^ string_of_tm (lvl + 1) e1
-      ^ " ⋊\n"
+      ^ ") ⋊ (\n"
       ^ string_of_tm (lvl + 1) e2
       ^ ")"
   | Mt -> indent lvl ^ "•"
