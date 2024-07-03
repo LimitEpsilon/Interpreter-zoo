@@ -80,24 +80,21 @@ let rec bind k = function
   | Match (s, b) -> Match (s, map_branches (bind k) b)
   | Guard (ctx, t) -> Guard (ctx, bind k t)
 
-(** val dstr_trace : dstr -> trace -> trace **)
+(** val dstr_trace : dstr -> (walue -> trace) -> walue -> trace **)
 
-let dstr_trace d =
-  let k w =
-    match unroll w with
-    | Some v -> (
-        match v with
-        | Vl_sh s -> Wal (Wvl_v (Vl_sh (Dstr (s, d))))
-        | Vl_cstr c -> (
-            let c_name = c.cs_type.cs_name in
-            let d_name = d.ds_type.cs_name in
-            match eqb_cstr c_name d_name with
-            | true -> Wal (get_idx c.cs_args d.ds_idx)
-            | false -> Bot)
-        | _ -> Bot)
-    | None -> Bot
-  in
-  bind k
+let dstr_trace d k w =
+  match unroll w with
+  | Some v -> (
+      match v with
+      | Vl_sh s -> k (Wvl_v (Vl_sh (Dstr (s, d))))
+      | Vl_cstr c -> (
+          let c_name = c.cs_type.cs_name in
+          let d_name = d.ds_type.cs_name in
+          match eqb_cstr c_name d_name with
+          | true -> k (get_idx c.cs_args d.ds_idx)
+          | false -> bot)
+      | _ -> bot)
+  | None -> bot
 
 (** val cstr_trace : trace cstr -> trace **)
 
@@ -112,21 +109,22 @@ let cstr_trace c =
   fold_arg c.cs_args id
 
 (** val link_trace :
-    (walue -> trace) -> (walue -> trace) -> trace -> trace **)
+    ((walue -> trace) -> walue -> trace) -> (walue -> trace) -> trace -> trace **)
 
+(** val read_trace : var -> trace -> trace **)
 let rec link_trace link k = function
-  | Bot -> Bot
-  | Wal w -> bind k (link w)
+  | Bot -> bot
+  | Wal w -> link k w
   | Match (s, b) ->
       let check_match w =
         match unroll w with
         | Some v -> (
             match v with
-            | Vl_sh s -> Match (s, map_branches (link_trace link k) b)
+            | Vl_sh s -> case s (map_branches (link_trace link k) b)
             | Vl_cstr c -> (
                 let fold_branch acc (c', t) =
                   match acc with
-                  | Some t -> Some t
+                  | Some t1 -> Some t1
                   | None -> (
                       match eqb_cstr c.cs_type.cs_name c'.cs_name with
                       | true -> Some (link_trace link k t)
@@ -134,153 +132,164 @@ let rec link_trace link k = function
                 in
                 match List.fold_left fold_branch None b with
                 | Some t -> t
-                | None -> Bot)
-            | _ -> Bot)
-        | None -> Bot
+                | None -> bot)
+            | _ -> bot)
+        | None -> bot
       in
-      bind check_match (link (Wvl_v (Vl_sh s)))
+      link check_match (Wvl_v (Vl_sh s))
   | Guard (ctx, t) ->
       let check_guard w =
         match unroll w with
         | Some v -> (
             match v with
-            | Vl_exp ctx -> Guard (ctx, link_trace link k t)
-            | Vl_sh s -> Guard (Nv_sh s, link_trace link k t)
-            | _ -> Bot)
-        | None -> Bot
+            | Vl_exp ctx -> guard ctx (link_trace link k t)
+            | Vl_sh s -> guard (Nv_sh s) (link_trace link k t)
+            | _ -> bot)
+        | None -> bot
       in
-      bind check_guard (link (Wvl_v (Vl_exp ctx)))
+      link check_guard (Wvl_v (Vl_exp ctx))
 
-(** val read_trace : var -> trace -> trace **)
+(** val read_trace : var -> (trace wvl -> trace) -> walue -> trace **)
 
-let read_trace x =
-  let read w =
-    match unroll w with
-    | Some v -> (
-        match v with
-        | Vl_exp ctx -> (
-            match read_env ctx x with
-            | Some (w, ctx) -> Guard (ctx, Wal w)
-            | None -> Bot)
-        | Vl_sh s -> Wal (Wvl_v (Vl_sh (Read (s, x))))
-        | _ -> Bot)
-    | None -> Bot
+let read_trace x k w =
+  match unroll w with
+  | Some v -> (
+      match v with
+      | Vl_exp ctx -> (
+          match read_env ctx x with
+          | Some (w, ctx) -> guard ctx (k w)
+          | None -> bot)
+      | Vl_sh s -> k (Wvl_v (Vl_sh (Read (s, x))))
+      | _ -> bot)
+  | None -> bot
+
+(** val close_rec : loc -> (walue -> trace) -> walue -> trace **)
+
+let close_rec l k w =
+  match unroll w with Some v -> k (Wvl_recv (close_value O l v)) | None -> bot
+
+(** val bd_trace : var -> walue -> (walue -> trace) -> walue -> trace **)
+
+let bd_trace x w k ctx =
+  match unroll ctx with
+  | Some v -> (
+      match v with
+      | Vl_exp ctx -> k (Wvl_v (Vl_exp (Nv_bd (x, w, ctx))))
+      | Vl_sh s -> k (Wvl_v (Vl_exp (Nv_bd (x, w, Nv_sh s))))
+      | _ -> bot)
+  | None -> bot
+
+(** val clos_trace :
+    var -> trace -> (walue -> trace) -> walue -> trace **)
+
+let clos_trace x t k w =
+  match unroll w with
+  | Some v -> (
+      match v with
+      | Vl_exp ctx -> k (Wvl_v (Vl_clos (x, t, ctx)))
+      | Vl_sh s -> k (Wvl_v (Vl_clos (x, t, Nv_sh s)))
+      | _ -> bot)
+  | None -> bot
+
+(** val filter_env : (trace wvl -> trace) -> walue -> trace **)
+
+let filter_env k w =
+  match unroll w with
+  | Some v -> (
+      match v with
+      | Vl_exp ctx -> k (Wvl_v (Vl_exp ctx))
+      | Vl_sh s -> k (Wvl_v (Vl_exp (Nv_sh s)))
+      | _ -> bot)
+  | None -> bot
+
+(** val linkF :
+    (env -> (walue -> trace) -> walue -> trace) -> env -> (walue -> trace) ->
+    walue -> trace **)
+
+let linkF link ctx =
+  let rec link_wvl k = function
+    | Wvl_v v -> link_vl k v
+    | Wvl_recv v ->
+        let l = Pos.max (alloc_value v) (alloc_env ctx) in
+        link_vl (close_rec l k) (open_loc_value O l v)
+    | Wvl_bloc _ -> bot
+    | Wvl_floc l -> k (Wvl_floc l)
+  and link_vl k v =
+    match v with
+    | Vl_exp ctx' -> link_nv k ctx'
+    | Vl_sh s -> link_shdw k s
+    | Vl_clos (x, t, ctx') -> link_nv (clos_trace x t k) ctx'
+    | Vl_cstr c ->
+        let fold_arg =
+          let rec fold_arg args k' =
+            match args with
+            | [] -> k (Wvl_v (Vl_cstr { cs_type = c.cs_type; cs_args = k' [] }))
+            | hd :: tl ->
+                let check_trace w = fold_arg tl (fun v -> k' (w :: v)) in
+                link_wvl check_trace hd
+          in
+          fold_arg
+        in
+        fold_arg c.cs_args id
+  and link_nv k ctx' =
+    match ctx' with
+    | Nv_mt -> k (Wvl_v (Vl_exp Nv_mt))
+    | Nv_sh s -> link_shdw (filter_env k) s
+    | Nv_bd (x, w, ctx') ->
+        let check_bound w' = link_nv (bd_trace x w' k) ctx' in
+        link_wvl check_bound w
+  and link_shdw k s =
+    match s with
+    | Init -> k (Wvl_v (Vl_exp ctx))
+    | Read (s, x) -> link_shdw (read_trace x k) s
+    | Call (s, w) ->
+        let check_fn fn =
+          match unroll fn with
+          | Some v -> (
+              match v with
+              | Vl_sh s ->
+                  let check_arg arg = k (Wvl_v (Vl_sh (Call (s, arg)))) in
+                  link_wvl check_arg w
+              | Vl_clos (x, t, ctx) ->
+                  let check_arg arg =
+                    let ctx' = Nv_bd (x, arg, ctx) in
+                    link_trace (link ctx') k t
+                  in
+                  link_wvl check_arg w
+              | _ -> bot)
+          | None -> bot
+        in
+        link_shdw check_fn s
+    | Dstr (s, d) -> link_shdw (dstr_trace d k) s
   in
-  bind read
+  link_wvl
 
-(** val call_trace : (env -> walue -> trace) -> trace -> trace -> trace **)
+(** val link : nat -> env -> (walue -> trace) -> walue -> trace **)
 
-let call_trace link fn arg =
+let rec link n ctx =
+  match n with O -> fun _ _ -> bot | S n -> linkF (link n) ctx
+
+(** val sem_call :
+    (env -> (walue -> trace) -> walue -> trace) -> trace -> trace -> trace **)
+
+let sem_call link fn arg =
   let check_fn fn =
     match unroll fn with
     | Some v -> (
         match v with
         | Vl_sh s ->
-            let check_arg arg = Wal (Wvl_v (Vl_sh (Call (s, arg)))) in
+            let check_arg arg = wal (Wvl_v (Vl_sh (Call (s, arg)))) in
             bind check_arg arg
         | Vl_clos (x, t, ctx) ->
             let check_arg arg =
               let ctx' = Nv_bd (x, arg, ctx) in
-              link_trace (link ctx') (fun w -> Wal w) t
+              link_trace (link ctx') wal t
             in
             bind check_arg arg
-        | _ -> Bot)
-    | None -> Bot
+        | _ -> bot)
+    | None -> bot
   in
   bind check_fn fn
-
-(** val close_rec : loc -> trace -> trace **)
-
-let close_rec l =
-  let close w =
-    match unroll w with
-    | Some v -> Wal (Wvl_recv (close_value O l v))
-    | None -> Bot
-  in
-  bind close
-
-(** val bd_trace : var -> trace -> trace -> trace **)
-
-let bd_trace x w ctx =
-  let check_bd w =
-    let check_mod ctx =
-      match unroll ctx with
-      | Some v -> (
-          match v with
-          | Vl_exp ctx -> Wal (Wvl_v (Vl_exp (Nv_bd (x, w, ctx))))
-          | Vl_sh s -> Wal (Wvl_v (Vl_exp (Nv_bd (x, w, Nv_sh s))))
-          | _ -> Bot)
-      | None -> Bot
-    in
-    bind check_mod ctx
-  in
-  bind check_bd w
-
-(** val clos_trace : var -> trace -> trace -> trace **)
-
-let clos_trace x k =
-  let clos w =
-    match unroll w with
-    | Some v -> (
-        match v with
-        | Vl_exp ctx -> Wal (Wvl_v (Vl_clos (x, k, ctx)))
-        | Vl_sh s -> Wal (Wvl_v (Vl_clos (x, k, Nv_sh s)))
-        | _ -> Bot)
-    | None -> Bot
-  in
-  bind clos
-
-(** val filter_env : trace -> trace **)
-
-let filter_env =
-  let filter w =
-    match unroll w with
-    | Some v -> (
-        match v with
-        | Vl_exp ctx -> Wal (Wvl_v (Vl_exp ctx))
-        | Vl_sh s -> Wal (Wvl_v (Vl_exp (Nv_sh s)))
-        | _ -> Bot)
-    | None -> Bot
-  in
-  bind filter
-
-(** val link : nat -> env -> walue -> trace **)
-
-let rec link n ctx =
-  match n with
-  | O -> fun _ -> Bot
-  | S n ->
-      let rec link_wvl = function
-        | Wvl_v v -> link_vl v
-        | Wvl_recv v ->
-            let l = Pos.max (alloc_value v) (alloc_env ctx) in
-            close_rec l (link_vl (open_loc_value O l v))
-        | Wvl_bloc _ -> Bot
-        | Wvl_floc l -> Wal (Wvl_floc l)
-      and link_vl = function
-        | Vl_exp ctx' -> link_nv ctx'
-        | Vl_sh s -> link_shdw s
-        | Vl_clos (x, k, ctx') -> clos_trace x k (link_nv ctx')
-        | Vl_cstr c ->
-            cstr_trace
-              { cs_type = c.cs_type; cs_args = List.map link_wvl c.cs_args }
-      and link_nv = function
-        | Nv_mt -> Wal (Wvl_v (Vl_exp Nv_mt))
-        | Nv_sh s -> filter_env (link_shdw s)
-        | Nv_bd (x, w, ctx') ->
-            let bound = link_wvl w in
-            let exp = link_nv ctx' in
-            bd_trace x bound exp
-      and link_shdw = function
-        | Init -> Wal (Wvl_v (Vl_exp ctx))
-        | Read (s, x) -> read_trace x (link_shdw s)
-        | Call (s, w) ->
-            let fn = link_shdw s in
-            let arg = link_wvl w in
-            call_trace (link n) fn arg
-        | Dstr (s, d) -> dstr_trace d (link_shdw s)
-      in
-      link_wvl
 
 (** val sem_link : (env -> walue -> trace) -> trace -> trace -> trace **)
 
@@ -317,6 +326,21 @@ let sem_bind link x bd exp =
     | None -> Bot
   in
   link_trace (link (Nv_bd (x, Wvl_floc XH, Nv_sh Init))) check_bd bd
+
+(** val sem_cstr : trace cstr -> trace **)
+
+let sem_cstr c =
+  let fold_arg =
+    let rec fold_arg args k' =
+      match args with
+      | [] -> wal (Wvl_v (Vl_cstr { cs_type = c.cs_type; cs_args = k' [] }))
+      | hd :: tl ->
+          let check_trace w = fold_arg tl (fun v -> k' (w :: v)) in
+          bind check_trace hd
+    in
+    fold_arg
+  in
+  fold_arg c.cs_args id
 
 (** val sem_case :
     (env -> walue -> trace) -> trace -> trace branch list -> trace **)
@@ -362,7 +386,7 @@ let rec eval link e =
     match e with
     | Var x -> Wal (Wvl_v (Vl_sh (Read (Init, x))))
     | Fn (x, m) -> Wal (Wvl_v (Vl_clos (x, eval link m, Nv_sh Init)))
-    | App (m, n) -> call_trace link (eval link m) (eval link n)
+    | App (m, n) -> sem_call link (eval link m) (eval link n)
     | Link (m, n) -> sem_link link (eval link m) (eval link n)
     | Mt -> guard (Wal (Wvl_v (Vl_exp Nv_mt)))
     | Bind (x, m, n) -> sem_bind link x (eval link m) (eval link n)

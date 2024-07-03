@@ -34,6 +34,22 @@ type value = (walue, trace) vl
 type shadow = walue shdw
 type env = walue nv
 
+(** val bot : trace **)
+
+let bot = Bot
+
+(** val wal : walue -> trace **)
+
+let wal w = Wal w
+
+(** val case : shadow -> (cstr_type, trace) list -> trace **)
+
+let case s b = Match (s, b)
+
+(** val guard : env -> trace -> trace **)
+
+let guard ctx t = Guard (ctx, t)
+
 (** val open_loc_shdw :
     (nat -> loc -> walue -> walue) -> nat -> loc -> shadow -> shadow **)
 
