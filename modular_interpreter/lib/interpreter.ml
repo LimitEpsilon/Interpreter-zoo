@@ -125,7 +125,7 @@ let rec eval link e =
     | Mt -> guard (Wal (Wvl_v (Vl_exp Nv_mt)))
     | Bind (x, m, n) -> sem_bind link x (eval link m) (eval link n)
     | Cstr c ->
-        cstr_trace
+        sem_cstr
           { cs_type = c.cs_type; cs_args = List.map (eval link) c.cs_args }
     | Case (e, b) ->
         let matched = eval link e in

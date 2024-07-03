@@ -96,18 +96,6 @@ let dstr_trace d k w =
       | _ -> bot)
   | None -> bot
 
-(** val cstr_trace : trace cstr -> trace **)
-
-let cstr_trace c =
-  let rec fold_arg v k =
-    match v with
-    | [] -> Wal (Wvl_v (Vl_cstr { cs_type = c.cs_type; cs_args = k [] }))
-    | hd :: tl ->
-        let check_trace w = fold_arg tl (fun v -> k (w :: v)) in
-        bind check_trace hd
-  in
-  fold_arg c.cs_args id
-
 (** val link_trace :
     ((walue -> trace) -> walue -> trace) -> (walue -> trace) -> trace -> trace **)
 
