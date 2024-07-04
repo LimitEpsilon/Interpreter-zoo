@@ -96,46 +96,49 @@ let dstr_trace d k w =
       | _ -> bot)
   | None -> bot
 
+(** val case_trace : 'v cstr -> (cstr_type * 'trace) list -> ('trace -> trace) -> trace *)
+let case_trace (c : 'v cstr) (b : (cstr_type * 'trace) list) k =
+  let fold_branch acc (c', t) =
+    match acc with
+    | Some t -> Some t
+    | None -> (
+        match eqb_cstr c.cs_type.cs_name c'.cs_name with
+        | true -> Some (k t)
+        | false -> None)
+  in
+  match List.fold_left fold_branch None b with Some t -> t | None -> bot
+
 (** val link_trace :
     ((walue -> trace) -> walue -> trace) -> (walue -> trace) -> trace -> trace **)
 
-(** val read_trace : var -> trace -> trace **)
-let rec link_trace link k = function
-  | Bot -> bot
-  | Wal w -> link k w
-  | Match (s, b) ->
-      let check_match w =
-        match unroll w with
-        | Some v -> (
-            match v with
-            | Vl_sh s -> case s (map_branches (link_trace link k) b)
-            | Vl_cstr c -> (
-                let fold_branch acc (c', t) =
-                  match acc with
-                  | Some t -> Some t
-                  | None -> (
-                      match eqb_cstr c.cs_type.cs_name c'.cs_name with
-                      | true -> Some (link_trace link k t)
-                      | false -> None)
-                in
-                match List.fold_left fold_branch None b with
-                | Some t -> t
-                | None -> bot)
-            | _ -> bot)
-        | None -> bot
-      in
-      link check_match (Wvl_v (Vl_sh s))
-  | Guard (ctx, t) ->
-      let check_guard w =
-        match unroll w with
-        | Some v -> (
-            match v with
-            | Vl_exp ctx -> guard ctx (link_trace link k t)
-            | Vl_sh s -> guard (Nv_sh s) (link_trace link k t)
-            | _ -> bot)
-        | None -> bot
-      in
-      link check_guard (Wvl_v (Vl_exp ctx))
+let link_trace link k =
+  let rec link_trace = function
+    | Bot -> bot
+    | Wal w -> link k w
+    | Match (s, b) ->
+        let check_match w =
+          match unroll w with
+          | Some v -> (
+              match v with
+              | Vl_sh s -> case s (map_branches link_trace b)
+              | Vl_cstr c -> case_trace c b link_trace
+              | _ -> bot)
+          | None -> bot
+        in
+        link check_match (Wvl_v (Vl_sh s))
+    | Guard (ctx, t) ->
+        let check_guard w =
+          match unroll w with
+          | Some v -> (
+              match v with
+              | Vl_exp ctx -> guard ctx (link_trace t)
+              | Vl_sh s -> guard (Nv_sh s) (link_trace t)
+              | _ -> bot)
+          | None -> bot
+        in
+        link check_guard (Wvl_v (Vl_exp ctx))
+  in
+  link_trace
 
 (** val read_trace : var -> (trace wvl -> trace) -> walue -> trace **)
 

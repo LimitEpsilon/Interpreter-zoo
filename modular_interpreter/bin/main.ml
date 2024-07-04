@@ -10,9 +10,13 @@ let () =
   in
   let speclist =
     [
-      ("-pp", Arg.Unit (fun _ -> opt_pp := true), "print pgm");
-      ("-trace", Arg.Int (fun n -> opt_trace := n), "print trace");
-      ("-result", Arg.Int (fun n -> opt_result := n), "print result");
+      ("-pp", Arg.Unit (fun _ -> opt_pp := true), "Pretty-print program");
+      ( "-trace",
+        Arg.Int (fun n -> opt_trace := n),
+        "[fuel] Print full trace with fuel (for debugging)" );
+      ( "-result",
+        Arg.Int (fun n -> opt_result := n),
+        "[fuel] Print result and path conditions with fuel" );
     ]
   in
   Arg.parse speclist (fun x -> src := x) usage_msg;
