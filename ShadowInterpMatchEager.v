@@ -14,9 +14,9 @@ Inductive tm :=
   | Link (m e : tm) (* m ⋊ e *)
   | Mt (* ε *)
   | Bind (x : var) (v m : tm) (* let rec x = v ; m *)
-  | Zero (* new! *)
-  | Succ (n : tm) (* new! *)
-  | Case (e : tm) (z : tm) (n : var) (s : tm) (* new! *)
+  | Zero (* O *)
+  | Succ (n : tm) (* S n *)
+  | Case (e : tm) (z : tm) (n : var) (s : tm)
     (* match e with 0 => z | S n => s end *)
 .
 
