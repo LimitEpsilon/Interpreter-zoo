@@ -21,6 +21,6 @@ and executed with
 
 Examples are in the [test](./test) folder.
 - Example 1.1 and 1.2 corresponds to [addonetwo](./test/addonetwo.l)
-- Example 1.3 and 1.4 corresponds to [sum](./sum.l)
+- Example 1.3 and 1.4 corresponds to [sum](./test/sum.l)
 - The parity testing function in Section 7 corresponds to [oddeven](./test/oddeven.l)
 - Other examples ([mult](./test/mult.l), [stream](./test/stream.l), [recfunctor](./test/recfunctor.l)) illustrate the ability to define recursive functions/data/functors.
