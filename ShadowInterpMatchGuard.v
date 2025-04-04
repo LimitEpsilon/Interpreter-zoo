@@ -279,7 +279,10 @@ Section PRE_VAL_IND.
     (forall v, Pvl v) /\
     (forall s, Pshdw s).
   Proof.
-    eauto using wvl_ind, (nv_ind wvl_ind), (vl_ind wvl_ind), (shdw_ind wvl_ind).
+    pose proof (nv_ind wvl_ind).
+    pose proof (vl_ind wvl_ind).
+    pose proof (shdw_ind wvl_ind).
+    eauto using wvl_ind.
   Qed.
 End PRE_VAL_IND.
 

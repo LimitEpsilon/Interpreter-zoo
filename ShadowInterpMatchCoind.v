@@ -1,4 +1,4 @@
-From Coq Require Import Utf8 Arith Lia String List.
+From Coq Require Import Utf8 PArith Lia String List.
 From Paco Require Import paco.
 Import ListNotations.
 
@@ -32,14 +32,15 @@ Inductive vl {tr} :=
 
 Arguments vl : clear implicits.
 
+Definition value := vl.
+Definition shadow trace := shdw (value trace).
+Definition env trace := nv (value trace).
+
 Section link.
   Context {trace : Type}.
-  Let value := vl trace.
-  Let shadow := shdw value.
-  Let env := nv value.
 
   Definition rd x :=
-    fix rd (σ : env) :=
+    fix rd (σ : env trace) :=
       match σ with
       | Init => Some (vl_sh (Rd x))
       | nv_mt => None
@@ -47,8 +48,8 @@ Section link.
         if x =? x' then Some v else rd σ'
       end.
 
-  Definition link_shdw stuck link_value link_trace (σ0 : env) :=
-    fix link (s : shadow) k : trace :=
+  Definition link_shdw stuck link_value link_trace σ0 :=
+    fix link (s : shadow trace) k : trace :=
       match s with
       | Rd x =>
         match rd x σ0 with
@@ -66,8 +67,8 @@ Section link.
         in link s' k_s
       end.
 
-  Definition link_nv link_value (σ0 : env) :=
-    fix link (σ : env) k : trace :=
+  Definition link_nv link_value (σ0 : env trace) :=
+    fix link (σ : env trace) k : trace :=
       match σ with
       | Init => k σ0
       | nv_mt => k nv_mt
@@ -78,8 +79,8 @@ Section link.
         in link_value v k_v
       end.
 
-  Definition link_vl stuck link_trace (σ0 : env) :=
-    fix link (v : value) k : trace :=
+  Definition link_vl stuck link_trace σ0 :=
+    fix link (v : value trace) k : trace :=
       match v with
       | vl_sh s => link_shdw stuck link link_trace σ0 s k
       | vl_clos x t σ =>
@@ -88,10 +89,168 @@ Section link.
       end.
 End link.
 
+Inductive term :=
+  | Var (x : var)
+  | Lam (x : var) (t : term)
+  | App (fn arg : term)
+.
+
+Definition ω := Lam "x" (App (Var "x") (Var "x")).
+Definition ι := Lam "x" (Var "x").
+Definition fst' := Lam "x" (Lam "y" (Var "x")).
+
+(* Version 1 *)
+Inductive OptVal := mkOpt (ov : option (value OptVal)).
+Definition stuck_opt := mkOpt None.
+Definition ret_opt r := mkOpt (Some r).
+
+Definition link_o link σ0 t k :=
+  match t with
+  | mkOpt None => stuck_opt
+  | mkOpt (Some v) => link_vl stuck_opt link σ0 v k
+  end.
+
+Fixpoint link_opt n :=
+  match n with
+  | 0 => fun _ _ _ => stuck_opt
+  | S n' => link_o (link_opt n')
+  end.
+
+Fixpoint denote_opt (t : term) k : nat → OptVal :=
+  match t with
+  | Var x => fun _ =>
+    let r := vl_sh (Rd x)
+    in k r
+  | Lam x e => fun n =>
+    let r := vl_clos x (denote_opt e ret_opt n) Init
+    in k r
+  | App fn arg => fun n =>
+    let k_fn f :=
+      let k_arg a :=
+        match f with
+        | vl_sh f' => k (vl_sh (Ap f' a))
+        | vl_clos x k' σ => link_opt n (nv_bd x a σ) k' k
+        end
+      in denote_opt arg k_arg n
+    in denote_opt fn k_fn n
+  end.
+
+Definition eval_denote_opt n t k σ :=
+  link_opt n σ (denote_opt t ret_opt n) k
+.
+
+Definition ev_opt ev :=
+  fix go (t : term) k : env term → option (vl term) :=
+    match t with
+    | Var x => fun σ =>
+      match rd x σ with
+      | None => None
+      | Some r => k r
+      end
+    | Lam x e => fun σ => k (vl_clos x e σ)
+    | App fn arg => fun σ =>
+      let k_fn f :=
+        let k_arg a :=
+          match f with
+          | vl_sh f' => k (vl_sh (Ap f' a))
+          | vl_clos x e σ' => ev e k (nv_bd x a σ')
+          end
+        in go arg k_arg σ
+      in go fn k_fn σ
+    end.
+
+Fixpoint eval_opt n :=
+  match n with
+  | 0 => ev_opt (fun _ _ _ => None)
+  | S n' => ev_opt (eval_opt n')
+  end.
+
+(* Compute eval_opt 2 (App ω ι) Some. *)
+(* Compute eval_denote_opt 2 (App ω ι) ret_opt. *)
+
+(* Judgment *)
+Variant judgF {judg} :=
+  | Stuck
+  | Ret (v : value judg)
+  | AppJ (fn arg body : judg)
+.
+
+Arguments judgF : clear implicits.
+
+Inductive judg := mkJudg (j : judgF judg).
+
+Definition on_ret k :=
+  fix go (j : judg) {struct j} :=
+    let '(mkJudg j') := j in
+    match j' with
+    | Stuck => mkJudg Stuck
+    | Ret v => k v
+    | AppJ _ _ body => go body
+    end.
+
+Definition link_j link σ0 :=
+  let stuck := mkJudg Stuck in
+  let ret v := mkJudg (Ret v) in
+  let appj f a b := mkJudg (AppJ f a b) in
+  fix go (j : judg) k {struct j} :=
+    let '(mkJudg j') := j in
+    match j' with
+    | Stuck => stuck
+    | Ret v => link_vl stuck link σ0 v k
+    | AppJ fn arg _ =>
+      let fn' := go fn ret in
+      let arg' := go arg ret in
+      let k_fn f :=
+        let k_arg a :=
+          match f with
+          | vl_sh s => k (vl_sh (Ap s a))
+          | vl_clos x k' σ => link (nv_bd x a σ) k' k
+          end
+        in on_ret k_arg arg'
+      in appj fn' arg' (on_ret k_fn fn')
+    end.
+
+Definition link_judg :=
+  let stuck := mkJudg Stuck in
+  fix go n :=
+    match n with
+    | 0 => fun _ _ _ => stuck
+    | S n' => link_j (go n')
+    end.
+
+Definition denote_judg :=
+  let stuck := mkJudg Stuck in
+  let ret v := mkJudg (Ret v) in
+  let appj f a b := mkJudg (AppJ f a b) in
+  fix go (t : term) k : nat → judg :=
+    match t with
+    | Var x => fun _ =>
+      let r := vl_sh (Rd x)
+      in k r
+    | Lam x e => fun n =>
+      let r := vl_clos x (go e ret n) Init
+      in k r
+    | App fn arg => fun n =>
+      let fn' := go fn ret n in
+      let arg' := go arg ret n in
+      let k_fn f :=
+        let k_arg a :=
+          match f with
+          | vl_sh f' => k (vl_sh (Ap f' a))
+          | vl_clos x k' σ => link_judg n (nv_bd x a σ) k' k
+          end
+        in on_ret k_arg arg'
+      in appj fn' arg' (on_ret k_fn fn')
+    end.
+
+(* Compute denote_judg (App (App fst' (App ω ω)) ι) (fun r => mkJudg (Ret r)) 2. *)
+
+(* Version 2 *)
+Module steps.
 Variant traceF {trace} :=
   | Stuck
-  | Ret (v : vl trace)
-  | Step (s : nv (vl trace)) (k : trace)
+  | Ret (v : value trace)
+  | Step (s : env trace) (k : trace)
 .
 
 Arguments traceF : clear implicits.
@@ -106,13 +265,6 @@ Definition obs_tr' (t : trace') :=
 (* Infinite tree *)
 CoInductive trace := mkTrace { obs_tr : traceF trace }.
 
-Definition value' := vl trace'.
-Definition value := vl trace.
-Definition shadow' := shdw value'.
-Definition shadow := shdw value.
-Definition env' := nv value'.
-Definition env := nv value.
-
 Notation stuck' := (mkTrace' Stuck) (only parsing).
 Notation stuck := (mkTrace Stuck) (only parsing).
 Notation ret' v := (mkTrace' (Ret v)) (only parsing).
@@ -120,88 +272,82 @@ Notation ret v := (mkTrace (Ret v)) (only parsing).
 Notation step' σ k := (mkTrace' (Step σ k)) (only parsing).
 Notation step σ k := (mkTrace (Step σ k)) (only parsing).
 
-Fixpoint link_trace n σ0 (t : trace) k :=
-  match n with
-  | 0 => stuck
-  | S n' =>
-    match obs_tr t with
-    | Stuck => stuck
-    | Ret v => link_vl stuck (link_trace n') σ0 v k
-    | Step σ t' =>
-      let k_σ σ' := step σ' (link_trace n' σ0 t' k)
-      in link_nv (link_vl stuck (link_trace n') σ0) σ0 σ k_σ
-    end
-  end.
-
-Fixpoint link_trace' n σ0 (t : trace') k :=
-  match n with
-  | 0 => stuck'
-  | S n' =>
+Definition link_tr' link :=
+  fix go σ0 (t : trace') k {struct t} :=
     match obs_tr' t with
     | Stuck => stuck'
-    | Ret v => link_vl stuck' (link_trace' n') σ0 v k
+    | Ret v => link_vl stuck' link σ0 v k
     | Step σ t' =>
-      let k_σ σ' := step' σ' (link_trace' n' σ0 t' k)
-      in link_nv (link_vl stuck' (link_trace' n') σ0) σ0 σ k_σ
-    end
+      let k_σ σ' := step' σ' (go σ0 t' k)
+      in link_nv (link_vl stuck' link σ0) σ0 σ k_σ
+    end.
+
+Fixpoint link_trace' n :=
+  match n with
+  | 0 => fun _ _ _ => stuck'
+  | S n' => link_tr' (link_trace' n')
   end.
 
-Definition link_value n := link_vl stuck (link_trace n).
-Definition link_value' n := link_vl stuck' (link_trace' n).
-Definition link_env n σ0 := link_nv (link_value n σ0) σ0.
-Definition link_env' n σ0 := link_nv (link_value' n σ0) σ0.
-Definition link_shadow n σ0 := link_shdw stuck (link_value n σ0) (link_trace n) σ0.
-Definition link_shadow' n σ0 := link_shdw stuck' (link_value' n σ0) (link_trace' n) σ0.
-
-Inductive term :=
-  | Var (x : var)
-  | Lam (x : var) (t : term)
-  | App (fn arg : term)
-.
-
-Definition sem :=
-  fix sem (t : term) k : nat → trace :=
-  match t with
-  | Var x => fun _ =>
-    let r := vl_sh (Rd x)
-    in step Init (k r)
-  | Lam x e => fun n =>
-    let r := vl_clos x (sem e (fun r => ret r) n) Init
-    in step Init (k r)
-  | App fn arg => fun n =>
-    let k_fn f :=
-      let k_arg a :=
-        match f with
-        | vl_sh f' => k (vl_sh (Ap f' a))
-        | vl_clos x k' σ => link_trace n (nv_bd x a σ) k' k
-        end
-      in sem arg k_arg n
-    in step Init (sem fn k_fn n)
-  end.
-
-Definition sem' :=
-  fix sem (t : term) k : nat → trace' :=
+Fixpoint denote (t : term) k : nat → trace' :=
   match t with
   | Var x => fun _ =>
     let r := vl_sh (Rd x)
     in step' Init (k r)
-  | Lam x e => fun n =>
-    let r := vl_clos x (sem e (fun r => ret' r) n) Init
+  | Lam x e =>
+    let E := denote e in fun n =>
+    let r := vl_clos x (E (fun r => ret' r) n) Init
     in step' Init (k r)
-  | App fn arg => fun n =>
+  | App fn arg =>
+    let Fn := denote fn in
+    let Arg := denote arg in fun n =>
     let k_fn f :=
       let k_arg a :=
         match f with
         | vl_sh f' => k (vl_sh (Ap f' a))
         | vl_clos x k' σ => link_trace' n (nv_bd x a σ) k' k
         end
-      in sem arg k_arg n
-    in step' Init (sem fn k_fn n)
+      in Arg k_arg n
+    in step' Init (Fn k_fn n)
   end.
 
-Definition ω := Lam "x" (App (Var "x") (Var "x")).
-Compute sem' (App ω ω) (fun r => ret' r) 10.
+Definition ev ev :=
+  fix go (t : term) k
+  : env term → list (env term) * option (value term) :=
+  match t with
+  | Var x => fun σ =>
+    match rd x σ with
+    | None => ([σ], None)
+    | Some r =>
+      let '(tr, v) := k r
+      in (σ :: tr, v)
+    end
+  | Lam x e => fun σ =>
+    let '(tr, v) := k (vl_clos x e σ)
+    in (σ :: tr, v)
+  | App fn arg => fun σ =>
+    let k_fn f :=
+      let k_arg a :=
+        match f with
+        | vl_sh f' => k (vl_sh (Ap f' a))
+        | vl_clos x e σ' => ev e k (nv_bd x a σ')
+        end
+      in go arg k_arg σ
+    in
+    let '(tr, v) := go fn k_fn σ
+    in (σ :: tr, v)
+  end.
+
+Fixpoint eval n :=
+  match n with
+  | 0 => ev (fun _ _ _ => ([], None))
+  | S n' => ev (eval n')
+  end.
+End steps.
+
+(* Prove that there exists a unique coinductive tree for every ω chain *)
 End simple.
+
+Definition loc := positive.
 
 Inductive shdw {nv wvl} :=
   | Init
@@ -220,7 +366,7 @@ Inductive nv {wvl} :=
 Arguments nv : clear implicits.
 
 Variant vl {P wvl tr} :=
-  | vl_prim (p : P) (* primitive value *)
+  | vl_prim (p : P) (* primitive Value *)
   | vl_nv (σ : nv wvl)
   | vl_sh (s : shdw (nv wvl) wvl) (* s *)
   | vl_clos (x : var) (t : tr) (σ : nv wvl) (* ⟨ λx.t, σ ⟩ *)
@@ -228,44 +374,50 @@ Variant vl {P wvl tr} :=
 
 Arguments vl : clear implicits.
 
-Inductive wvl {P L tr} :=
+Inductive wvl {P tr} :=
   | wvl_v (v : vl P wvl tr) (* v *)
-  | wvl_recv (v : L → vl P wvl tr) (* μℓ.v *)
-  | wvl_loc (ℓ : L) (* free location *)
+  | wvl_recv (v : vl P wvl tr) (* μℓ.v *)
+  | wvl_floc (ℓ : loc) (* free location *)
+  | wvl_bloc (n : nat) (* bound location *)
 .
 
 Arguments wvl : clear implicits.
 
-Variant traceF {P L trace} :=
+Variant traceF {P trace} :=
   | Stuck
-  | Ret (w : wvl P L trace)
-  | Step (σ : nv (wvl P L trace)) (t : trace)
+  | Ret (w : wvl P trace)
+  | Step (σ : nv (wvl P trace)) (t : trace)
 .
 
 Arguments traceF : clear implicits.
 
 (* Finite approximation *)
-Inductive trace' {P L} := mkTrace' (k : traceF P L trace').
-Definition obs_tr' {P L} (t : @trace' P L) :=
+Inductive trace' {P} := mkTrace' (k : traceF P trace').
+Definition obs_tr' {P} (t : @trace' P) :=
   match t with
   | mkTrace' k => k
   end.
 
 (* Infinite tree *)
-CoInductive trace {P L} := mkTrace { obs_tr : traceF P L trace }.
+CoInductive trace {P} := mkTrace { obs_tr : traceF P trace }.
 
 Arguments trace' : clear implicits.
 Arguments trace : clear implicits.
-Arguments mkTrace {_ _} _.
+Arguments mkTrace {_} _.
 
-Definition walue' P L := wvl P L (trace' P L).
-Definition walue P L := wvl P L (trace P L).
-Definition env' P L := nv (walue' P L).
-Definition env P L := nv (walue P L).
-Definition shadow' P L := shdw (env' P L) (walue' P L).
-Definition shadow P L := shdw (env' P L) (walue P L).
-Definition value' P L := vl P (walue' P L) (trace' P L).
-Definition value P L := vl P (walue P L) (trace P L).
+Definition walue := wvl.
+Definition env P trace := nv (walue P trace).
+Definition shadow P trace := shdw (env P trace) (walue P trace).
+Definition value P trace := vl P (walue P trace) trace.
+
+Definition Walue' P := walue P (trace' P).
+Definition Walue P := walue P (trace P).
+Definition Env' P := env P (trace' P).
+Definition Env P := env P (trace P).
+Definition Shadow' P := shadow P (trace' P).
+Definition Shadow P := shadow P (trace P).
+Definition Value' P := value P (trace' P).
+Definition Value P := value P (trace P).
 
 Notation stuck' := (mkTrace' Stuck) (only parsing).
 Notation stuck := (mkTrace Stuck) (only parsing).
@@ -275,11 +427,11 @@ Notation step' σ t := (mkTrace' (Step σ t)) (only parsing).
 Notation step σ t := (mkTrace (Step σ t)) (only parsing).
 
 Section ind.
-  Context {P L tr : Type}.
-  Let Walue := wvl P L tr.
-  Let Value := vl P Walue tr.
-  Let Env := nv Walue.
-  Let Shadow := shdw Env Walue.
+  Context {P tr : Type}.
+  Let Walue := walue P tr.
+  Let Value := value P tr.
+  Let Env := env P tr.
+  Let Shadow := shadow P tr.
   Context (Ptr : tr → Prop) (tr_ind : ∀ k, Ptr k)
           (Pshdw : Shadow → Prop)
           (Pnv : Env → Prop)
@@ -296,8 +448,9 @@ Section ind.
           (Pvl_sh : ∀ s, Pshdw s → Pvl (vl_sh s))
           (Pvl_clos : ∀ x k σ, Ptr k → Pnv σ → Pvl (vl_clos x k σ)).
   Context (Pwvl_v : ∀ v, Pvl v → Pwvl (wvl_v v))
-          (Pwvl_recv : ∀ v, (∀ ℓ, Pvl (v ℓ)) → Pwvl (wvl_recv v))
-          (Pwvl_loc : ∀ ℓ, Pwvl (wvl_loc ℓ)).
+          (Pwvl_recv : ∀ v, Pvl v → Pwvl (wvl_recv v))
+          (Pwvl_floc : ∀ ℓ, Pwvl (wvl_floc ℓ))
+          (Pwvl_bloc : ∀ n, Pwvl (wvl_bloc n)).
 
   Definition shdw_ind nv_ind wvl_ind :=
     fix go s : Pshdw s :=
@@ -326,8 +479,9 @@ Section ind.
   Fixpoint wvl_ind w : Pwvl w :=
     match w with
     | wvl_v v => Pwvl_v v (vl_ind wvl_ind v)
-    | wvl_recv v => Pwvl_recv v (fun ℓ => vl_ind wvl_ind (v ℓ))
-    | wvl_loc ℓ => Pwvl_loc ℓ
+    | wvl_recv v => Pwvl_recv v (vl_ind wvl_ind v)
+    | wvl_floc ℓ => Pwvl_floc ℓ
+    | wvl_bloc n => Pwvl_bloc n
     end.
 
   Lemma pre_val_ind :
@@ -341,12 +495,12 @@ Section ind.
 End ind.
 
 Section trace'_ind.
-  Context {P L : Type}.
-  Let tr := trace' P L.
-  Let Walue := wvl P L tr.
-  Let Value := vl P Walue tr.
-  Let Env := nv Walue.
-  Let Shadow := shdw Env Walue.
+  Context {P : Type}.
+  Let tr := trace' P.
+  Let Walue := walue P tr.
+  Let Value := value P tr.
+  Let Env := env P tr.
+  Let Shadow := shadow P tr.
   Context (Ptr : tr → Prop)
           (Pshdw : Shadow → Prop)
           (Pnv : Env → Prop)
@@ -363,19 +517,19 @@ Section trace'_ind.
           (Pvl_sh : ∀ s, Pshdw s → Pvl (vl_sh s))
           (Pvl_clos : ∀ x k σ, Ptr k → Pnv σ → Pvl (vl_clos x k σ)).
   Context (Pwvl_v : ∀ v, Pvl v → Pwvl (wvl_v v))
-          (Pwvl_recv : ∀ v, (∀ ℓ, Pvl (v ℓ)) → Pwvl (wvl_recv v))
-          (Pwvl_loc : ∀ ℓ, Pwvl (wvl_loc ℓ)).
+          (Pwvl_recv : ∀ v, Pvl v → Pwvl (wvl_recv v))
+          (Pwvl_floc : ∀ ℓ, Pwvl (wvl_floc ℓ))
+          (Pwvl_bloc : ∀ n, Pwvl (wvl_bloc n)).
   Context (Pstuck : Ptr stuck')
           (Pret : ∀ w, Pwvl w → Ptr (ret' w))
           (Pstep : ∀ σ t, Pnv σ → Ptr t → Ptr (step' σ t)).
 
-  Check shdw_ind.
   Fixpoint trace'_ind (t : tr) : Ptr t :=
     let wvl_ind' := wvl_ind _ trace'_ind _ _ _ _
       PInit PRd PAp
       Pnv_sh Pnv_one Pnv_mrg
       Pvl_prim Pvl_nv Pvl_sh Pvl_clos
-      Pwvl_v Pwvl_recv Pwvl_loc in
+      Pwvl_v Pwvl_recv Pwvl_floc Pwvl_bloc in
     let nv_ind' := nv_ind _ _ _
       PInit PRd PAp
       Pnv_sh Pnv_one Pnv_mrg wvl_ind' in
@@ -392,11 +546,11 @@ Section trace'_ind.
     (∀ s, Pshdw s) ∧ (∀ σ, Pnv σ) ∧ (∀ v, Pvl v) ∧ (∀ w, Pwvl w) ∧ (∀ t, Ptr t).
   Proof.
     pose proof
-      (pre_val_ind (tr := tr) (L := L) Ptr trace'_ind Pshdw Pnv Pvl Pwvl
+      (pre_val_ind (tr := tr) Ptr trace'_ind Pshdw Pnv Pvl Pwvl
         PInit PRd PAp
         Pnv_sh Pnv_one Pnv_mrg
         Pvl_prim Pvl_nv Pvl_sh Pvl_clos
-        Pwvl_v Pwvl_recv Pwvl_loc).
+        Pwvl_v Pwvl_recv Pwvl_floc Pwvl_bloc).
     intuition auto.
     apply trace'_ind.
   Qed.
@@ -433,13 +587,14 @@ Section map.
     | vl_clos x t σ => vl_clos x (map_tr t) (map_nv map_wvl σ)
     end.
 
-  Definition map_wvl {P L tr tr'}
+  Definition map_wvl {P tr tr'}
     (map_tr : tr → tr') :=
-    fix map_w (w : wvl P L tr) : wvl P L tr' :=
+    fix map_w (w : wvl P tr) : wvl P tr' :=
       match w with
       | wvl_v v => wvl_v (map_vl map_w map_tr v)
-      | wvl_recv v => wvl_recv (fun ℓ => map_vl map_w map_tr (v ℓ))
-      | wvl_loc ℓ => wvl_loc ℓ
+      | wvl_recv v => wvl_recv (map_vl map_w map_tr v)
+      | wvl_floc ℓ => wvl_floc ℓ
+      | wvl_bloc ℓ => wvl_bloc ℓ
       end.
 End map.
 
@@ -511,9 +666,9 @@ Section rel.
       end
     end.
 
-  Definition rel_wvl {P L tr tr'}
+  Definition rel_wvl {P tr tr'}
     (rel_tr : tr → tr' → Prop) :=
-    fix rel_w (w : wvl P L tr) (w' : wvl P L tr') :=
+    fix rel_w (w : wvl P tr) (w' : wvl P tr') :=
       match w with
       | wvl_v v =>
         match w' with
@@ -522,27 +677,29 @@ Section rel.
         end
       | wvl_recv v =>
         match w' with
-        | wvl_recv v' => ∀ ℓ, rel_vl rel_w rel_tr (v ℓ) (v' ℓ)
+        | wvl_recv v' => rel_vl rel_w rel_tr v v'
         | _ => False
         end
-      | wvl_loc ℓ => match w' with wvl_loc ℓ' => ℓ = ℓ' | _ => False end
+      (* Assume a fixed allocation function *)
+      | wvl_floc ℓ => match w' with wvl_floc ℓ' => ℓ = ℓ' | _ => False end
+      | wvl_bloc n => match w' with wvl_bloc n' => n = n' | _ => False end
       end.
 
-  Context {P L tr tr' : Type}
+  Context {P tr tr' : Type}
     (r r' : tr → tr' → Prop)
     (LEt : ∀ t t', r t t' → r' t t').
 
-  Definition rel_shdw_monotone (s : shdw (nv (wvl P L tr)) (wvl P L tr)) :=
+  Definition rel_shdw_monotone (s : shdw (nv (wvl P tr)) (wvl P tr)) :=
     ∀ s', rel_shdw (rel_wvl r) (rel_nv (rel_wvl r)) s s' →
           rel_shdw (rel_wvl r') (rel_nv (rel_wvl r')) s s'
   .
-  Definition rel_nv_monotone (σ : nv (wvl P L tr)) :=
+  Definition rel_nv_monotone (σ : nv (wvl P tr)) :=
     ∀ σ', rel_nv (rel_wvl r) σ σ' → rel_nv (rel_wvl r') σ σ'
   .
-  Definition rel_vl_monotone (v : vl P (wvl P L tr) tr) :=
+  Definition rel_vl_monotone (v : vl P (wvl P tr) tr) :=
     ∀ v', rel_vl (rel_wvl r) r v v' → rel_vl (rel_wvl r') r' v v'
   .
-  Definition rel_wvl_monotone (w : wvl P L tr) :=
+  Definition rel_wvl_monotone (w : wvl P tr) :=
     ∀ w', rel_wvl r w w' → rel_wvl r' w w'
   .
 
@@ -563,8 +720,8 @@ Section rel.
 End rel.
 
 (* partial order between finite approximations *)
-Definition le_trace' {P L} :=
-  fix le_t (t t' : trace' P L) :=
+Definition le_trace' {P} :=
+  fix le_t (t t' : trace' P) :=
     let le_wvl := rel_wvl le_t in
     match obs_tr' t with
     | Stuck => True
@@ -580,51 +737,51 @@ Definition le_trace' {P L} :=
       end
     end.
 
-Lemma le_trace'_refl {P L} :
-  let le_wvl (w : walue' P L) := rel_wvl le_trace' w in
-  let le_vl (v : value' P L) := rel_vl le_wvl le_trace' v in
-  let le_nv (σ : env' P L) := rel_nv le_wvl σ in
-  let le_shdw (s : shadow' P L) := rel_shdw le_wvl le_nv s in
+Lemma le_trace'_refl {P} :
+  let le_wvl (w : Walue' P) := rel_wvl le_trace' w in
+  let le_vl (v : Value' P) := rel_vl le_wvl le_trace' v in
+  let le_nv (σ : Env' P) := rel_nv le_wvl σ in
+  let le_shdw (s : Shadow' P) := rel_shdw le_wvl le_nv s in
   (∀ s, le_shdw s s) ∧
   (∀ σ, le_nv σ σ) ∧
   (∀ v, le_vl v v) ∧
   (∀ w, le_wvl w w) ∧
-  (∀ t : trace' P L, le_trace' t t).
+  (∀ t : trace' P, le_trace' t t).
 Proof. cbn zeta. apply val'_ind; simpl; auto. Qed.
 
-Lemma le_trace'_trans {P L} :
-  let le_wvl (w : walue' P L) := rel_wvl le_trace' w in
-  let le_vl (v : value' P L) := rel_vl le_wvl le_trace' v in
-  let le_nv (σ : env' P L) := rel_nv le_wvl σ in
-  let le_shdw (s : shadow' P L) := rel_shdw le_wvl le_nv s in
-  (∀ s' : shadow' P L,
+Lemma le_trace'_trans {P} :
+  let le_wvl (w : Walue' P) := rel_wvl le_trace' w in
+  let le_vl (v : Value' P) := rel_vl le_wvl le_trace' v in
+  let le_nv (σ : Env' P) := rel_nv le_wvl σ in
+  let le_shdw (s : Shadow' P) := rel_shdw le_wvl le_nv s in
+  (∀ s' : Shadow' P,
     ∀ s s'', le_shdw s s' → le_shdw s' s'' → le_shdw s s'') ∧
-  (∀ σ' : env' P L,
+  (∀ σ' : Env' P,
     ∀ σ σ'', le_nv σ σ' → le_nv σ' σ'' → le_nv σ σ'') ∧
-  (∀ v' : value' P L,
+  (∀ v' : Value' P,
     ∀ v v'', le_vl v v' → le_vl v' v'' → le_vl v v'') ∧
-  (∀ w' : walue' P L,
+  (∀ w' : Walue' P,
     ∀ w w'', le_wvl w w' → le_wvl w' w'' → le_wvl w w'') ∧
-  (∀ t' : trace' P L,
+  (∀ t' : trace' P,
     ∀ t t'', le_trace' t t' → le_trace' t' t'' → le_trace' t t'').
 Proof.
   cbn zeta. apply val'_ind; simpl; intros;
   match goal with
   | |- rel_shdw _ _ ?s ?s'' =>
     destruct s; simpl in *; intuition eauto;
-    subst; destruct s''; intuition eauto
+    on_ret; destruct s''; intuition eauto
   | |- rel_nv _ ?σ ?σ'' =>
     destruct σ; simpl in *; intuition eauto;
-    subst; destruct σ''; intuition eauto
+    on_ret; destruct σ''; intuition eauto
   | |- rel_vl _ _ ?v ?v'' =>
     destruct v; simpl in *; intuition eauto;
-    subst; destruct v''; intuition eauto
+    on_ret; destruct v''; intuition eauto
   | |- rel_wvl _ ?w ?w'' =>
     destruct w; simpl in *; intuition eauto;
-    subst; destruct w''; intuition eauto
+    on_ret; destruct w''; intuition eauto
   | |- le_trace' ?t ?t'' =>
     destruct t; simpl in *; intuition eauto;
-    subst; destruct t''; intuition eauto
+    on_ret; destruct t''; intuition eauto
   end.
   - destruct k; simpl in *; intuition eauto.
   - destruct k; simpl in *; intuition eauto.
@@ -634,8 +791,8 @@ Proof.
 Qed.
 
 (* approx t' t : t' is a finite approximation of t *)
-Definition approx {P L} :=
-  fix approx (t' : trace' P L) (t : trace P L) :=
+Definition approx {P} :=
+  fix approx (t' : trace' P) (t : trace P) :=
     let approx_w := rel_wvl approx in
     match obs_tr' t' with
     | Stuck => True
@@ -651,7 +808,7 @@ Definition approx {P L} :=
       end
     end.
 
-Variant eq_traceF {P L} eq : trace P L → trace P L → Prop :=
+Variant eq_traceF {P} eq : trace P → trace P → Prop :=
   | eq_stuck : eq_traceF eq stuck stuck
   | eq_ret w w'
     (EQw : rel_wvl eq w w')
@@ -664,16 +821,16 @@ Variant eq_traceF {P L} eq : trace P L → trace P L → Prop :=
 
 Arguments eq_traceF : clear implicits.
 
-Lemma eq_traceF_monotone {P L} : monotone2 (eq_traceF P L).
+Lemma eq_traceF_monotone {P} : monotone2 (eq_traceF P).
 Proof.
-  repeat intro. inversion IN; try constructor; subst; auto.
+  repeat intro. inversion IN; try constructor; on_ret; auto.
   all: eapply rel_monotone; eauto.
 Qed.
 
 Hint Resolve eq_traceF_monotone : paco.
-Definition eq_trace P L := paco2 (eq_traceF P L) bot2.
+Definition eq_trace P := paco2 (eq_traceF P) bot2.
 
-Fixpoint nth_trace {P L} (n : nat) (t : trace P L) : trace' P L :=
+Fixpoint nth_trace {P} (n : nat) (t : trace P) : trace' P :=
   match n with
   | 0 => stuck'
   | S n' =>
@@ -688,58 +845,131 @@ Fixpoint nth_trace {P L} (n : nat) (t : trace P L) : trace' P L :=
     end
   end.
 
-Section flatten.
-  Context {P L : Type} (flatten_walue' : walue' P (walue' P L) → walue' P L).
- 
-  Definition flatten_shadow' flatten_env' :=
-    fix flatten (s : shadow' P (walue' P L)) : shadow' P L :=
+Section subst.
+  Context {P trace : Type}.
+  Let Walue := walue P trace.
+  Let Env := env P trace.
+  Let Value := value P trace.
+  Let Shadow := shadow P trace.
+
+  (** Operations for on_retitution *)
+  (* open the bound location i with ℓ *)
+  Definition open_loc_shdw fw fn (i : nat) (ℓ : loc) :=
+    fix open (s : shadow P trace) : Shadow :=
     match s with
     | Init => Init
-    | Rd s σ x => Rd (flatten s) (flatten_env' σ) x
-    | Ap s w => Ap (flatten s) (flatten_walue' w)
+    | Rd s σ x => Rd (open s) (fn σ) x
+    | Ap s w => Ap (open s) (fw w)
     end.
 
-  Fixpoint flatten_env' (σ : env' P (walue' P L)) : env' P L :=
+  Definition open_loc_nv fw (i : nat) (ℓ : loc) :=
+    fix open (σ : Env) :=
     match σ with
-    | nv_sh s => nv_sh (flatten_shadow' flatten_env' s)
-    | nv_one x w => nv_one x (flatten_walue' w)
-    | nv_mrg σ σ' => nv_mrg (flatten_env' σ) (flatten_env' σ')
+    | nv_sh s => nv_sh (open_loc_shdw fw open i ℓ s)
+    | nv_one x w => nv_one x (fw w)
+    | nv_mrg σ σ' => nv_mrg (open σ) (open σ') 
     end.
 
-  Context (flatten_trace' : trace' P (walue' P L) → trace' P L).
+  Definition open_loc_vl fw (i : nat) (ℓ : loc) :=
+    let open (v : Value) :=
+      match v with
+      | vl_prim p => vl_prim p
+      | vl_nv σ => vl_nv (open_loc_nv fw i ℓ σ)
+      | vl_sh s => vl_sh (open_loc_shdw fw (open_loc_nv fw i ℓ) i ℓ s)
+      | vl_clos x k σ => vl_clos x k (open_loc_nv fw i ℓ σ)
+      end in
+    open.
 
-  Definition flatten_value' (v : value' P (walue' P L)) : value' P L :=
-    match v with
-    | vl_prim p => vl_prim p
-    | vl_nv σ => vl_nv (flatten_env' σ)
-    | vl_sh s => vl_sh (flatten_shadow' flatten_env' s)
-    | vl_clos x t σ =>
-      vl_clos x
-        (flatten_trace' t)
-        (flatten_env' σ)
+  Fixpoint open_loc_walue (i : nat) (ℓ : loc) (w : Walue) : Walue :=
+    match w with
+    | wvl_v v => wvl_v (open_loc_vl (open_loc_walue i ℓ) i ℓ v)
+    | wvl_recv v => wvl_recv (open_loc_vl (open_loc_walue (S i) ℓ) (S i) ℓ v)
+    | wvl_bloc n => if Nat.eqb i n then wvl_floc ℓ else wvl_bloc n
+    | wvl_floc ℓ => wvl_floc ℓ
     end.
-End flatten.
 
-Definition flatten_walue' {P L} flatten_trace' :=
-  fix flatten_walue' (w : walue' P (walue' P L)) : walue' P L :=
-  let f := flatten_value' flatten_walue' flatten_trace' in
-  match w with
-  | wvl_v v => wvl_v (f v)
-  | wvl_recv v => wvl_recv (fun ℓ => f (v (wvl_loc ℓ)))
-  | wvl_loc ℓ => ℓ (* flatten *)
-  end.
+  Definition open_loc_value i ℓ := open_loc_vl (open_loc_walue i ℓ) i ℓ.
+  Definition open_loc_env i ℓ := open_loc_nv (open_loc_walue i ℓ) i ℓ.
+  Definition open_loc_shadow i ℓ := open_loc_shdw (open_loc_walue i ℓ) (open_loc_env i ℓ).
 
-Definition flatten_trace' {P L} :=
-  fix flatten_trace' (t : trace' P (walue' P L)) : trace' P L :=
-  let f := flatten_walue' flatten_trace' in
-  match t with
-  | mkTrace' k =>
-    match k with
-    | Stuck => stuck'
-    | Ret w => ret' (f w)
-    | Step σ t => step' (flatten_env' f σ) (flatten_trace' t)
-    end
-  end.
+  (* close the free location ℓ with the binding depth i *)
+  Definition close_loc_shdw fw fn (i : nat) (ℓ : loc) :=
+    fix close (s : shadow P trace) : Shadow :=
+    match s with
+    | Init => Init
+    | Rd s σ x => Rd (close s) (fn σ) x
+    | Ap s w => Ap (close s) (fw w)
+    end.
+
+  Definition close_loc_nv fw (i : nat) (ℓ : loc) :=
+    fix close (σ : Env) :=
+    match σ with
+    | nv_sh s => nv_sh (close_loc_shdw fw close i ℓ s)
+    | nv_one x w => nv_one x (fw w)
+    | nv_mrg σ σ' => nv_mrg (close σ) (close σ') 
+    end.
+
+  Definition close_loc_vl fw (i : nat) (ℓ : loc) :=
+    let close (v : Value) :=
+      match v with
+      | vl_prim p => vl_prim p
+      | vl_nv σ => vl_nv (close_loc_nv fw i ℓ σ)
+      | vl_sh s => vl_sh (close_loc_shdw fw (close_loc_nv fw i ℓ) i ℓ s)
+      | vl_clos x k σ => vl_clos x k (close_loc_nv fw i ℓ σ)
+      end in
+    close.
+
+  Fixpoint close_loc_walue (i : nat) (ℓ : loc) (w : Walue) : Walue :=
+    match w with
+    | wvl_v v => wvl_v (close_loc_vl (close_loc_walue i ℓ) i ℓ v)
+    | wvl_recv v => wvl_recv (close_loc_vl (close_loc_walue (S i) ℓ) (S i) ℓ v)
+    | wvl_bloc n => wvl_bloc n
+    | wvl_floc ℓ' => if Pos.eqb ℓ ℓ' then wvl_bloc i else wvl_floc ℓ'
+    end.
+
+  Definition close_loc_value i ℓ := close_loc_vl (close_loc_walue i ℓ) i ℓ.
+  Definition close_loc_env i ℓ := close_loc_nv (close_loc_walue i ℓ) i ℓ.
+  Definition close_loc_shadow i ℓ := close_loc_shdw (close_loc_walue i ℓ) (close_loc_env i ℓ).
+
+  (* open the bound location i with u *)
+  Definition open_wvl_shdw fw fn (i : nat) (u : Walue) :=
+    fix open (s : shadow P trace) : Shadow :=
+    match s with
+    | Init => Init
+    | Rd s σ x => Rd (open s) (fn σ) x
+    | Ap s w => Ap (open s) (fw w)
+    end.
+
+  Definition open_wvl_nv fw (i : nat) (u : Walue) :=
+    fix open (σ : Env) :=
+    match σ with
+    | nv_sh s => nv_sh (open_wvl_shdw fw open i u s)
+    | nv_one x w => nv_one x (fw w)
+    | nv_mrg σ σ' => nv_mrg (open σ) (open σ') 
+    end.
+
+  Definition open_wvl_vl fw (i : nat) (u : Walue) :=
+    let open (v : Value) :=
+      match v with
+      | vl_prim p => vl_prim p
+      | vl_nv σ => vl_nv (open_wvl_nv fw i u σ)
+      | vl_sh s => vl_sh (open_wvl_shdw fw (open_wvl_nv fw i u) i u s)
+      | vl_clos x k σ => vl_clos x k (open_wvl_nv fw i u σ)
+      end in
+    open.
+
+  Fixpoint open_wvl_walue (i : nat) (u : Walue) (w : Walue) : Walue :=
+    match w with
+    | wvl_v v => wvl_v (open_wvl_vl (open_wvl_walue i u) i u v)
+    | wvl_recv v => wvl_recv (open_wvl_vl (open_wvl_walue (S i) u) (S i) u v)
+    | wvl_bloc n => if Nat.eqb i n then u else wvl_bloc n
+    | wvl_floc ℓ => wvl_floc ℓ
+    end.
+
+  Definition open_wvl_value i ℓ := open_wvl_vl (open_wvl_walue i ℓ) i ℓ.
+  Definition open_wvl_env i ℓ := open_wvl_nv (open_wvl_walue i ℓ) i ℓ.
+  Definition open_wvl_shadow i ℓ := open_wvl_shdw (open_wvl_walue i ℓ) (open_wvl_env i ℓ).
+End subst.
 
 (* Define : coinductive version of traces *)
 (* Define : strong bisimilarity between traces *)
