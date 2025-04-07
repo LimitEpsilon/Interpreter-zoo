@@ -36,8 +36,58 @@ Definition value := vl.
 Definition shadow trace := shdw (value trace).
 Definition env trace := nv (value trace).
 
+Section ind.
+  Context {T : Type}.
+  Let Value := value T.
+  Let Env := env T.
+  Let Shadow := shadow T.
+  Context (Ptr : T → Prop) (tr_ind : ∀ t, Ptr t)
+          (Pshdw : Shadow → Prop)
+          (Pnv : Env → Prop)
+          (Pvl : Value → Prop).
+  Context (PRd : ∀ x, Pshdw (Rd x))
+          (PAp : ∀ s v, Pshdw s → Pvl v → Pshdw (Ap s v)).
+  Context (PInit : Pnv Init)
+          (Pnv_mt : Pnv nv_mt)
+          (Pnv_bd : ∀ x v σ, Pvl v → Pnv σ → Pnv (nv_bd x v σ)).
+  Context (Pvl_sh : ∀ s, Pshdw s → Pvl (vl_sh s))
+          (Pvl_clos : ∀ x k σ, Ptr k → Pnv σ → Pvl (vl_clos x k σ)).
+
+  Definition shdw_ind vl_ind :=
+    fix go s : Pshdw s :=
+      match s as s' return Pshdw s' with
+      | Rd x => PRd x
+      | Ap f v => PAp f v (go f) (vl_ind v)
+      end.
+
+  Definition nv_ind vl_ind :=
+    fix go σ : Pnv σ :=
+      match σ as σ' return Pnv σ' with
+      | Init => PInit
+      | nv_mt => Pnv_mt
+      | nv_bd x v σ' => Pnv_bd x v σ' (vl_ind v) (go σ')
+      end.
+
+  Fixpoint vl_ind v : Pvl v :=
+    match v as v' return Pvl v' with
+    | vl_sh s => Pvl_sh s (shdw_ind vl_ind s)
+    | vl_clos x t σ => Pvl_clos x t σ (tr_ind t) (nv_ind vl_ind σ)
+    end.
+
+  Lemma pre_val_ind :
+    (∀ s, Pshdw s) ∧ (∀ σ, Pnv σ) ∧ (∀ v, Pvl v).
+  Proof.
+    pose proof (nv_ind vl_ind).
+    pose proof (shdw_ind vl_ind).
+    eauto using vl_ind.
+  Qed.
+End ind.
+
 Section link.
   Context {trace : Type}.
+  Context {T : Type}.
+  Context (stuck : T).
+  Context (link_trace : env trace → trace → (value trace → T) → T).
 
   Definition rd x :=
     fix rd (σ : env trace) :=
@@ -48,8 +98,8 @@ Section link.
         if x =? x' then Some v else rd σ'
       end.
 
-  Definition link_shdw stuck link_value link_trace σ0 :=
-    fix link (s : shadow trace) k : trace :=
+  Definition link_shdw link_value σ0 :=
+    fix link (s : shadow trace) k : T :=
       match s with
       | Rd x =>
         match rd x σ0 with
@@ -68,7 +118,7 @@ Section link.
       end.
 
   Definition link_nv link_value (σ0 : env trace) :=
-    fix link (σ : env trace) k : trace :=
+    fix link (σ : env trace) k : T :=
       match σ with
       | Init => k σ0
       | nv_mt => k nv_mt
@@ -79,10 +129,10 @@ Section link.
         in link_value v k_v
       end.
 
-  Definition link_vl stuck link_trace σ0 :=
-    fix link (v : value trace) k : trace :=
+  Definition link_vl σ0 :=
+    fix link (v : value trace) k : T :=
       match v with
-      | vl_sh s => link_shdw stuck link link_trace σ0 s k
+      | vl_sh s => link_shdw link σ0 s k
       | vl_clos x t σ =>
         let k_σ σ' := k (vl_clos x t σ')
         in link_nv link σ0 σ k_σ
@@ -95,79 +145,377 @@ Inductive term :=
   | App (fn arg : term)
 .
 
+Definition term_ind P
+  (PVar : ∀ x, P (Var x))
+  (PLam : ∀ x e, P e → P (Lam x e))
+  (PApp : ∀ fn arg, P fn → P arg → P (App fn arg)) :=
+  fix go t :=
+    match t as t' return P t' with
+    | Var x => PVar x
+    | Lam x e => PLam x e (go e)
+    | App fn arg => PApp fn arg (go fn) (go arg)
+    end.
+
 Definition ω := Lam "x" (App (Var "x") (Var "x")).
 Definition ι := Lam "x" (Var "x").
 Definition fst' := Lam "x" (Lam "y" (Var "x")).
 
-(* Version 1 *)
-Inductive OptVal := mkOpt (ov : option (value OptVal)).
-Definition stuck_opt := mkOpt None.
-Definition ret_opt r := mkOpt (Some r).
+Inductive traceF {trace} :=
+  | Stuck
+  | Ret (v : value trace)
+  | Step (s : env trace) (k : traceF)
+.
 
-Definition link_o link σ0 t k :=
-  match t with
-  | mkOpt None => stuck_opt
-  | mkOpt (Some v) => link_vl stuck_opt link σ0 v k
-  end.
+Arguments traceF : clear implicits.
 
-Fixpoint link_opt n :=
+(* Finite approximation *)
+Inductive trace := Tr (e : term) (k : traceF trace).
+
+Definition link_tr link σ0 :=
+  fix go (t : traceF trace) k {struct t} :=
+    let link_value := link_vl Stuck link in
+    match t with
+    | Stuck => Stuck
+    | Ret v => link_value σ0 v k
+    | Step σ t' =>
+      let k_σ σ' := Step σ' (go t' k) in
+      link_nv (link_value σ0) σ0 σ k_σ
+    end.
+
+Fixpoint link_trace n :=
   match n with
-  | 0 => fun _ _ _ => stuck_opt
-  | S n' => link_o (link_opt n')
+  | 0 => fun _ _ _ => Stuck
+  | S n' =>
+    let link σ0 t k :=
+      match t with
+      | Tr _ t' => link_trace n' σ0 t' k
+      end in
+    link_tr link
   end.
 
-Fixpoint denote_opt (t : term) k : nat → OptVal :=
+Fixpoint denote (t : term) k {struct t} : nat → traceF trace :=
+  fun m => match m with 0 => Stuck | S n =>
   match t with
-  | Var x => fun _ =>
-    let r := vl_sh (Rd x)
-    in k r
-  | Lam x e => fun n =>
-    let r := vl_clos x (denote_opt e ret_opt n) Init
-    in k r
-  | App fn arg => fun n =>
+  | Var x =>
+    let r := vl_sh (Rd x) in
+    Step Init (k r)
+  | Lam x e =>
+    let E := Tr e (denote e Ret n) in
+    let r := vl_clos x E Init in
+    Step Init (k r)
+  | App fn arg =>
     let k_fn f :=
       let k_arg a :=
         match f with
         | vl_sh f' => k (vl_sh (Ap f' a))
-        | vl_clos x k' σ => link_opt n (nv_bd x a σ) k' k
-        end
-      in denote_opt arg k_arg n
-    in denote_opt fn k_fn n
+        | vl_clos x (Tr _ k') σ =>
+          link_trace n (nv_bd x a σ) k' k
+        end in
+      denote arg k_arg n in
+    Step Init (denote fn k_fn n)
+  end end.
+
+(*
+Definition ev ev :=
+  fix go t (k : _ → list (env term) * option (vl term)) :=
+  match t with
+  | Var x => fun σ =>
+    match rd x σ with
+    | None => ([σ], None)
+    | Some r =>
+      let '(tr, v) := k r in
+      (σ :: tr, v)
+    end
+  | Lam x e => fun σ =>
+    let '(tr, v) := k (vl_clos x e σ) in
+    (σ :: tr, v)
+  | App fn arg => fun σ =>
+    let k_fn f :=
+      let k_arg a :=
+        match f with
+        | vl_sh f' => k (vl_sh (Ap f' a))
+        | vl_clos x e σ' => ev e k (nv_bd x a σ')
+        end in
+      go arg k_arg σ in
+    let '(tr, v) := go fn k_fn σ in
+    (σ :: tr, v)
+  end.
+*)
+
+Definition ev ev :=
+  fix go t (k : _ → option (vl term)) :=
+  match t with
+  | Var x => fun σ =>
+    match rd x σ with
+    | None => None
+    | Some r => k r
+    end
+  | Lam x e => fun σ => k (vl_clos x e σ)
+  | App fn arg => fun σ =>
+    let k_fn f :=
+      let k_arg a :=
+        match f with
+        | vl_sh f' => k (vl_sh (Ap f' a))
+        | vl_clos x e σ' => ev e k (nv_bd x a σ')
+        end in
+      go arg k_arg σ in
+    go fn k_fn σ
   end.
 
-Definition eval_denote_opt n t k σ :=
-  link_opt n σ (denote_opt t ret_opt n) k
-.
+Fixpoint eval n :=
+  match n with
+  | 0 => fun _ _ _ => None
+  | S n' => ev (eval n')
+  end.
 
-Definition ev_opt ev :=
-  fix go (t : term) k : env term → option (vl term) :=
-    match t with
-    | Var x => fun σ =>
-      match rd x σ with
-      | None => None
-      | Some r => k r
-      end
-    | Lam x e => fun σ => k (vl_clos x e σ)
-    | App fn arg => fun σ =>
-      let k_fn f :=
-        let k_arg a :=
-          match f with
-          | vl_sh f' => k (vl_sh (Ap f' a))
-          | vl_clos x e σ' => ev e k (nv_bd x a σ')
+Definition lift_shdw f n :=
+  fix go (s : shadow trace) :=
+    match s with
+    | Rd x => fun σ0 => rd x σ0
+    | Ap s v => fun σ0 =>
+      match go s σ0 with
+      | Some fn =>
+        match f v σ0 with
+        | Some arg =>
+          match fn with
+          | vl_sh s' => Some (vl_sh (Ap s' arg))
+          | vl_clos x e σ => eval n e Some (nv_bd x arg σ)
           end
-        in go arg k_arg σ
-      in go fn k_fn σ
+        | None => None
+        end
+      | None => None
+      end
     end.
 
-Fixpoint eval_opt n :=
-  match n with
-  | 0 => ev_opt (fun _ _ _ => None)
-  | S n' => ev_opt (eval_opt n')
+Definition lift_nv f :=
+  fix go (σ : env trace) :=
+    match σ with
+    | Init => Some
+    | nv_mt => fun _ : env term => Some nv_mt
+    | nv_bd x v σ' => fun σ0 =>
+      match f v σ0 with
+      | Some v' =>
+        match go σ' σ0 with
+        | Some σ'' => Some (nv_bd x v' σ'')
+        | None => None
+        end
+      | None => None
+      end
+    end.
+
+Definition lift_vl n :=
+  fix go (v : value trace) :=
+    match v with
+    | vl_sh s => fun σ0 => lift_shdw go n s σ0
+    | vl_clos x (Tr e _) σ => fun σ0 =>
+      match lift_nv go σ σ0 with
+      | Some σ' => Some (vl_clos x e σ')
+      | None => None
+      end
+    end.
+
+Definition lift_value := lift_vl.
+Definition lift_env n := lift_nv (lift_value n).
+Definition lift_shadow n := lift_shdw (lift_value n) n.
+Definition lift_trace n :=
+  fix go (t : traceF trace) :=
+    match t with
+    | Stuck => fun σ0 => None
+    | Ret v => fun σ0 => lift_vl n v σ0
+    | Step σ k => fun σ0 =>
+      match lift_env n σ σ0 with
+      | Some _ => go k σ0
+      | None => None
+      end
+    end.
+
+Lemma test : ∀ m t n (GT : n < m) k k' k0 σ0 σ
+  (WF : ∀ v
+    (WFv :
+      match v with
+      | vl_sh _ => True
+      | vl_clos x (Tr e t') σ =>
+        t' = match n with
+        | 0 => Stuck
+        | S n' => denote e Ret n'
+        end
+      end),
+    lift_trace m (link_trace m σ0 (k v) k0) σ =
+    match lift_env m σ0 σ with
+    | Some σ' =>
+      match lift_value m v σ' with
+      | Some v' => k' v'
+      | None => None
+      end
+    | None => None
+    end),
+  lift_trace m (link_trace m σ0 (denote t k n) k0) σ =
+  match lift_env m σ0 σ with
+  | Some σ' => eval n t k' σ'
+  | None => None
   end.
+Proof.
+  induction m. lia.
+  induction t; intros.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    destruct n; simpl.
+    destruct (lift_env _ _ _); auto.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    rewrite WF; auto.
+    destruct (lift_env _ _ _); auto.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    destruct n; simpl.
+    destruct (lift_env _ _ _); auto.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    rewrite WF; auto.
+    destruct (lift_env _ _ _); auto.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    destruct n; simpl.
+    destruct (lift_env _ _ _); auto.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    erewrite IHt1.
+    destruct (lift_env _ _ _) eqn:RR; try reflexivity.
 
-(* Compute eval_opt 2 (App ω ι) Some. *)
-(* Compute eval_denote_opt 2 (App ω ι) ret_opt. *)
 
+    auto.
+
+  induction n.
+  { intro. induction t; simpl; intros;
+    destruct (lift_env _ _ _) eqn:RR; auto. }
+  intro. apply PeanoNat.lt_S_n in GT.
+  induction t; intros.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    rewrite WF; auto.
+    destruct (lift_env _ _ _); auto.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    rewrite WF; auto. simpl.
+    destruct (lift_env _ _ _); auto.
+  - simpl.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S m) σ0 t k)
+    end.
+    destruct (lift_env _ _ _) eqn:RR; auto.
+    erewrite IHt1. rewrite RR. reflexivity.
+    intros f WFf.
+    erewrite IHt2. rewrite RR.
+    instantiate (1 := fun a =>
+      match lift_value (S n) f e with
+      | Some f' =>
+        match f' with
+        | vl_sh s' => k' (vl_sh (Ap s' a))
+        | vl_clos x e' σ' => ev (eval n) e' k' (nv_bd x a σ')
+        end
+      | None => None
+      end).
+    destruct (lift_value _ _ _) eqn:RR'; auto. { admit. }
+    intros.
+    destruct f. rewrite WF; auto.
+    rewrite RR. simpl.
+    destruct (lift_shdw _ _ _ _);
+    destruct (lift_value _ _ _); auto.
+    destruct v0; auto. { admit. } 
+    destruct t; subst.
+    rewrite RR.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S n) σ0 t k)
+    end.
+    cbv [lift_value]. cbn [lift_vl].
+    destruct (lift_env _ _ _); try reflexivity.
+    simpl. reflexivity.
+    .
+  destruct (lift_env _ _ _) eqn:RR; auto.
+    match goal with
+    | |- context [link_tr ?link ?σ0 ?t ?k] =>
+      change (link_tr link σ0 t k) with
+      (link_trace (S n) σ0 t k)
+    end.
+    rewrite IHt1.
+    fold 
+Abort.
+Lemma test' : ∀ n t k k' σ
+  (WF : ∀ v
+    (WFv :
+      match v with
+      | vl_sh _ => True
+      | vl_clos x (Tr e t') σ =>
+        t' = denote e Ret n
+      end),
+    lift_trace n (k v) σ =
+    match lift_value n v σ with
+    | Some v' => k' v'
+    | None => None
+    end),
+  lift_trace n (denote t k n) σ =
+  ev (eval n) t k' σ.
+Proof.
+  induction n; [apply test|].
+  induction t; simpl; intros.
+  - rewrite WF; auto.
+  - rewrite WF; auto.
+  - erewrite IHt1. reflexivity.
+    intros f WFf. simpl.
+    erewrite IHt2.
+    instantiate (1 := fun a =>
+      match lift_value (S n) f σ with
+      | Some f' =>
+        match f' with
+        | vl_sh s' => k' (vl_sh (Ap s' a))
+        | vl_clos x e σ' => ev (eval n) e k' (nv_bd x a σ')
+        end
+      | None => None
+      end).
+    destruct (lift_value (S n) f σ) eqn:?; simpl; auto.
+    { admit. }
+    intros. simpl. destruct f; simpl.
+    rewrite WF; auto. simpl.
+    destruct (lift_shdw _ _ _ _); simpl;
+    destruct (lift_value _ _ _); simpl; auto.
+    destruct v0; auto. { admit. }
+    destruct t; simpl; subst.
+    destruct (lift_nv _ _ _) eqn:?.
+Abort.
+Module judg.
 (* Judgment *)
 Variant judgF {judg} :=
   | Stuck
@@ -244,105 +592,7 @@ Definition denote_judg :=
     end.
 
 (* Compute denote_judg (App (App fst' (App ω ω)) ι) (fun r => mkJudg (Ret r)) 2. *)
-
-(* Version 2 *)
-Module steps.
-Variant traceF {trace} :=
-  | Stuck
-  | Ret (v : value trace)
-  | Step (s : env trace) (k : trace)
-.
-
-Arguments traceF : clear implicits.
-
-(* Finite approximation *)
-Inductive trace' := mkTrace' (k : traceF trace').
-Definition obs_tr' (t : trace') :=
-  match t with
-  | mkTrace' k => k
-  end.
-
-(* Infinite tree *)
-CoInductive trace := mkTrace { obs_tr : traceF trace }.
-
-Notation stuck' := (mkTrace' Stuck) (only parsing).
-Notation stuck := (mkTrace Stuck) (only parsing).
-Notation ret' v := (mkTrace' (Ret v)) (only parsing).
-Notation ret v := (mkTrace (Ret v)) (only parsing).
-Notation step' σ k := (mkTrace' (Step σ k)) (only parsing).
-Notation step σ k := (mkTrace (Step σ k)) (only parsing).
-
-Definition link_tr' link :=
-  fix go σ0 (t : trace') k {struct t} :=
-    match obs_tr' t with
-    | Stuck => stuck'
-    | Ret v => link_vl stuck' link σ0 v k
-    | Step σ t' =>
-      let k_σ σ' := step' σ' (go σ0 t' k)
-      in link_nv (link_vl stuck' link σ0) σ0 σ k_σ
-    end.
-
-Fixpoint link_trace' n :=
-  match n with
-  | 0 => fun _ _ _ => stuck'
-  | S n' => link_tr' (link_trace' n')
-  end.
-
-Fixpoint denote (t : term) k : nat → trace' :=
-  match t with
-  | Var x => fun _ =>
-    let r := vl_sh (Rd x)
-    in step' Init (k r)
-  | Lam x e =>
-    let E := denote e in fun n =>
-    let r := vl_clos x (E (fun r => ret' r) n) Init
-    in step' Init (k r)
-  | App fn arg =>
-    let Fn := denote fn in
-    let Arg := denote arg in fun n =>
-    let k_fn f :=
-      let k_arg a :=
-        match f with
-        | vl_sh f' => k (vl_sh (Ap f' a))
-        | vl_clos x k' σ => link_trace' n (nv_bd x a σ) k' k
-        end
-      in Arg k_arg n
-    in step' Init (Fn k_fn n)
-  end.
-
-Definition ev ev :=
-  fix go (t : term) k
-  : env term → list (env term) * option (value term) :=
-  match t with
-  | Var x => fun σ =>
-    match rd x σ with
-    | None => ([σ], None)
-    | Some r =>
-      let '(tr, v) := k r
-      in (σ :: tr, v)
-    end
-  | Lam x e => fun σ =>
-    let '(tr, v) := k (vl_clos x e σ)
-    in (σ :: tr, v)
-  | App fn arg => fun σ =>
-    let k_fn f :=
-      let k_arg a :=
-        match f with
-        | vl_sh f' => k (vl_sh (Ap f' a))
-        | vl_clos x e σ' => ev e k (nv_bd x a σ')
-        end
-      in go arg k_arg σ
-    in
-    let '(tr, v) := go fn k_fn σ
-    in (σ :: tr, v)
-  end.
-
-Fixpoint eval n :=
-  match n with
-  | 0 => ev (fun _ _ _ => ([], None))
-  | S n' => ev (eval n')
-  end.
-End steps.
+End judg.
 
 (* Prove that there exists a unique coinductive tree for every ω chain *)
 End simple.
