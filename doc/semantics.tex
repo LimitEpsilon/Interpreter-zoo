@@ -1,0 +1,89 @@
+\section{Denotational Semantics for Untyped $\lambda$-Calculus}
+
+\subsection{Semantic Domains}
+\begin{figure}[h]
+  \small
+  \begin{tabular}{rrcll}
+    Program variable    & $x$      & $\in$ & $\textsf{Var}$                                                          \\
+    Expression          & $e$      & $\in$ & $\Expr\Coloneqq x$ $\vbar$ $\lambda x.e$ $\vbar$ $e$ $e$                \\
+    Shadow              & $S$      & $\in$ & $\Event\Coloneqq\textsf{Rd}(x)$ $\vbar$ $\textsf{Ap}(S,v)$              \\
+    Environment         & $\sigma$ & $\in$ & $\Ctx\Coloneqq\textsf{Init}$ $\vbar$ $(x,v)\cons\sigma$                 \\
+    Value               & $v$      & $\in$ & $\Value\Coloneqq S$ $\vbar$ $\langle x,t,\sigma \rangle$                \\
+    Trace (Coinductive) & $t$      & $\in$ & $\textsf{Trace}\Coloneqq\bot$ $\vbar$ $\sigma\rightarrow t$ $\vbar$ $v$ \\
+  \end{tabular}
+\end{figure}
+
+\subsection{Linking}
+Linking is defined by mixed induction-coinduction.
+$\sigma_0\semlink t\fatsemi k$ appeals to $t$ coinductively, while for other domains the arguments are recursed upon inductively.
+
+\begin{alignat*}{3}
+  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Event\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
+  \sigma_0\semlink{} &  & \textsf{Rd}(x)             &  & {}\fatsemi k\triangleq{} & \textsf{rd}(\sigma_0,x;k)                                                                                \\
+  \sigma_0\semlink{} &  & \textsf{Ap}(S,v)           &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink S\fatsemi\lambda f.\sigma_0\semlink v\fatsemi\lambda a.\textsf{ap}(f,a;k)               \\
+  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Ctx\rightarrow(\Ctx\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
+  \sigma_0\semlink{} &  & \textsf{Init}              &  & {}\fatsemi k\triangleq{} & k(\sigma_0)                                                                                              \\
+  \sigma_0\semlink{} &  & (x,v)\cons\sigma           &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink v\fatsemi\lambda v'.\sigma_0\semlink\sigma\fatsemi\lambda \sigma'.k((x,v')\cons\sigma') \\
+  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Value\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
+  \sigma_0\semlink{} &  & \langle x,t,\sigma \rangle &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink\sigma\fatsemi\lambda \sigma'.k(\langle x,t,\sigma'\rangle)                              \\
+  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\textsf{Trace}\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
+  \sigma_0\semlink{} &  & \bot                       &  & {}\fatsemi k\triangleq{} & \bot                                                                                                     \\
+  \sigma_0\semlink{} &  & \sigma\rightarrow t        &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink\sigma\fatsemi\lambda\sigma'.\sigma'\rightarrow \sigma_0\semlink t\fatsemi k
+\end{alignat*}
+
+$\textsf{rd}(\sigma,x;k)$ and $\textsf{ap}(f,a;k)$ are defined by
+\[
+  \textsf{rd}(\sigma,x;k)\triangleq
+  \begin{cases}
+    \bot & \text{when }\sigma(x)=\bot \\
+    k(v) & \text{when }\sigma(x)=v
+  \end{cases}
+\]
+\[
+  \textsf{ap}(f,a;k)\triangleq
+  \begin{cases}
+    (x,a)\cons\sigma\semlink t\fatsemi k & \text{when }f=\langle x,t,\sigma \rangle \\
+    k(\textsf{Ap}(S,a))                  & \text{when }f=S
+  \end{cases}
+\]
+
+\subsection{Denotational Semantics}
+Denotational semantics is defined by
+\begin{alignat*}{2}
+  \intertext{\hfill\fbox{$\sembracket{e}\in(\Value\to\textsf{Trace})\to\textsf{Trace}$}}
+  \sembracket{x}k           & \triangleq\textsf{Init}\rightarrow k(\textsf{Rd}(x))                                                     \\
+  \sembracket{\lambda x.e}k & \triangleq\textsf{Init}\rightarrow k(\langle x,\sembracket{e}\textsf{Ret},\textsf{Init}\rangle)          \\
+  \sembracket{e_1\:e_2}k    & \triangleq\textsf{Init}\rightarrow\sembracket{e_1}\lambda f.\sembracket{e_2}\lambda a.\textsf{ap}(f,a;k)
+\end{alignat*}
+
+Why do we need the $\textsf{Init}\rightarrow$ prefix?
+
+\[(\lambda\omega.(\lambda x.\lambda y.y)(\omega\:\omega))(\lambda x.x\:x)\]
+
+Preserve non-termination in call-by-value semantics
+
+\subsection{Proving Equivalence with Standard Semantics}
+
+\begin{figure}[h]
+  \small
+  \begin{tabular}{rrcll}
+    Environment & $\underline{\sigma}$ & $\in$ & $\underline{\Ctx}\triangleq\fin{\textsf{Var}}{\underline{\Value}}$          \\
+    Value       & $\underline{v}$      & $\in$ & $\underline{\Value}\triangleq\textsf{Var}\times\Expr\times\underline{\Ctx}$
+  \end{tabular}
+\end{figure}
+
+We can "lower" a shadow-free environment/value/trace into a function from some initial environment $\underline{\sigma_0}\in\underline{\Ctx}$
+to its output environment/value/value.
+For example,
+\begin{alignat*}{2}
+  \intertext{\hfill\fbox{$\downarrow\sigma\in\underline{\Ctx}\rightharpoonup\underline{\Ctx}$}}
+  \downarrow\textsf{Init}    & \triangleq\lambda\underline{\sigma_0}.\underline{\sigma_0} \\
+  \downarrow(x,v)\cons\sigma & \triangleq(\downarrow\sigma)[x\mapsto\downarrow v]
+\end{alignat*}
+
+Note that the function is a partial function; it might return bottom if some intermediate output is bottom.
+Such a case might occur when either there is an infinite computation or an unresolved computation (a shadow).
+
+We want to prove that $\underline{\sigma}\vdash e\Downarrow \underline{v}$ if and only if
+there exists a $\sigma$ such that $(\downarrow\sigma)[]=\underline{\sigma}$ and
+$(\downarrow(\sigma\semlink\sembracket{e}\textsf{Ret}\fatsemi\textsf{Ret}))[]=\underline{v}$.
