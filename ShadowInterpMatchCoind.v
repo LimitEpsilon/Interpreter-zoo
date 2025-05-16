@@ -16,8 +16,17 @@ Module StreamTest.
 
   Arguments streamF : clear implicits.
 
-  Inductive streamA {T : Type} := mkStreamA (k : streamF T streamA).
+  Inductive streamA {T : Type} := Str (k : streamF T streamA).
   Arguments streamA : clear implicits.
+
+  Definition streamA_ind T P (Psnil : P (Str snil))
+    (Pscons : ∀ (hd : T) (tl : streamA T), P tl → P (Str (scons hd tl)))
+  : ∀ s, P s :=
+    fix go s :=
+      match s with
+      | Str snil => Psnil
+  | Str (scons hd tl) => Pscons hd tl (go tl)
+      end.
 
   CoInductive stream {T : Type} := mkStream { obs_st : streamF T stream }.
   Arguments stream : clear implicits.
@@ -35,26 +44,58 @@ Module StreamTest.
       end
     end.
 
-  Fixpoint le_streamA {T} (s s' : streamA T) :=
-    match s with
-    | mkStreamA k =>
-      match s' with
-      | mkStreamA k' => le_streamF le_streamA k k'
+  Definition lt_streamF {T st} (lt_st : st → st → Prop) :=
+    fun (sF sF' : streamF T st) =>
+    match sF with
+    | snil =>
+      match sF' with
+      | snil => False
+      | scons _ _ => True
+      end
+    | scons hd tl =>
+      match sF' with
+      | scons hd' tl' => hd = hd' ∧ lt_st tl tl'
+      | _ => False
       end
     end.
 
-  Fixpoint nth_approx {T} (s : stream T) (n : nat) : streamF T (streamA T) :=
-    match n with
+  Fixpoint le_streamA {T} (s s' : streamA T) :=
+    match s with
+    | Str k =>
+      match s' with
+      | Str k' => le_streamF le_streamA k k'
+      end
+    end.
+
+  Fixpoint lt_streamA {T} (s s' : streamA T) :=
+    match s with
+    | Str k =>
+      match s' with
+      | Str k' => lt_streamF lt_streamA k k'
+      end
+    end.
+
+  Fixpoint nth_approxA {T} (s : streamA T) (n : nat) : streamA T :=
+    Str match n with
+    | 0 => snil
+    | S n' =>
+      match s with
+      | Str snil => snil
+      | Str (scons hd tl) => scons hd (nth_approxA tl n')
+      end
+    end.
+
+  Fixpoint nth_approx {T} (s : stream T) (n : nat) : streamA T :=
+    Str match n with
     | 0 => snil
     | S n' =>
       match obs_st s with
       | snil => snil
-      | scons hd tl => scons hd (mkStreamA (nth_approx tl n'))
+      | scons hd tl => scons hd (nth_approx tl n')
       end
     end.
 
-  Definition eq_streamF T eq_st :=
-    fun (s s' : stream T) =>
+  Definition eq_streamF T eq_st (s s' : stream T) :=
     match obs_st s with
     | snil =>
       match obs_st s' with
@@ -76,11 +117,56 @@ Module StreamTest.
   Qed.
 
   Hint Resolve eq_streamF_monotone : paco.
+
   Definition eq_stream {T} := paco2 (eq_streamF T) bot2.
 
+  (* eq_stream is an equivalence relation *)
+  Lemma eq_stream_refl {T} (s : stream T)
+  : eq_stream s s.
+  Proof.
+    revert s. pcofix CIH.
+    intros. pfold. unfold eq_streamF.
+    destruct (obs_st s); auto.
+  Qed.
+
+  Lemma eq_stream_sym {T} (s s' : stream T) (EQ : eq_stream s s')
+  : eq_stream s' s.
+  Proof.
+    revert s s' EQ. pcofix CIH.
+    intros. pfold. unfold eq_streamF.
+    destruct (obs_st _) eqn:OBS'.
+    - punfold EQ.
+      unfold eq_streamF in EQ.
+      rewrite OBS' in *. auto.
+    - punfold EQ. unfold eq_streamF in EQ.
+      rewrite OBS' in *.
+      destruct (obs_st s) eqn:OBS; auto.
+      destruct EQ as (? & EQ); subst.
+      split; auto.
+      destruct EQ as [?|?]; try contradiction.
+      right. auto.
+  Qed.
+
+  Lemma eq_stream_trans {T} (s s' s'' : stream T)
+    (EQ : eq_stream s s') (EQ' : eq_stream s' s'')
+  : eq_stream s s''.
+  Proof.
+    revert s s' s'' EQ EQ'. pcofix CIH.
+    intros. punfold EQ. punfold EQ'. pfold.
+    unfold eq_streamF in *.
+    destruct (obs_st s) eqn:OBS.
+    { destruct (obs_st s') eqn:OBS'; try contradiction. auto. }
+    destruct (obs_st s') eqn:OBS'; try contradiction.
+    destruct EQ as (? & EQ); subst.
+    destruct (obs_st s'') eqn:OBS''; try contradiction.
+    destruct EQ' as (? & EQ'); subst.
+    pclearbot.
+    split; auto. right. eauto.
+  Qed.
+
   Lemma eq_streamA_eq_stream {T} (s s' : stream T)
-    (LE : ∀ n, ∃ m, le_streamF le_streamA (nth_approx s n) (nth_approx s' m))
-    (LE' : ∀ n, ∃ m, le_streamF le_streamA (nth_approx s' n) (nth_approx s m))
+    (LE : ∀ n, ∃ m, le_streamA (nth_approx s n) (nth_approx s' m))
+    (LE' : ∀ n, ∃ m, le_streamA (nth_approx s' n) (nth_approx s m))
   : eq_stream s s'.
   Proof.
     revert s s' LE LE'. pcofix CIH.
@@ -106,32 +192,55 @@ Module StreamTest.
         destruct m; simpl in *. rewrite OBS' in *. destruct LE''.
         rewrite OBS, OBS' in *.
         exists m. eapply LE''. }
-    Qed.
+  Qed.
 
-  Lemma eq_stream_sym {T} (s s' : stream T) (EQ : eq_stream s s')
-  : eq_stream s' s.
+  Lemma le_streamA_refl {T} (s : streamA T) :
+    le_streamA s s.
+  Proof. induction s; simpl; auto. Qed.
+
+  Lemma le_streamA_trans {T} :
+    (∀ s' : streamA T,
+      ∀ s s'', le_streamA s s' → le_streamA s' s'' → le_streamA s s'').
   Proof.
-    revert s s' EQ. pcofix CIH.
-    intros. pfold. unfold eq_streamF.
-    destruct (obs_st _) eqn:OBS'.
-    - punfold EQ.
-      unfold eq_streamF in EQ.
-      rewrite OBS' in *. auto.
-    - punfold EQ. unfold eq_streamF in EQ.
-      rewrite OBS' in *.
-      destruct (obs_st s) eqn:OBS; auto.
-      destruct EQ as (? & EQ); subst.
-      split; auto.
-      destruct EQ as [?|?]; try contradiction.
-      right. auto.
+    induction s'; destruct s; destruct k; simpl.
+    - destruct s''; auto.
+    - intuition auto.
+    - destruct s''. destruct k; intuition auto.
+    - intros ? (? & LE); subst.
+      destruct s''; intuition auto.
+      destruct k; intuition auto.
+  Qed.
+
+  Lemma lt_streamA_trans {T} :
+    (∀ s' : streamA T,
+      ∀ s s'', lt_streamA s s' → lt_streamA s' s'' → lt_streamA s s'').
+  Proof.
+    induction s'; destruct s; destruct k; simpl.
+    - destruct s''; auto.
+    - intuition auto.
+    - destruct s''. destruct k; intuition auto.
+    - intros ? (? & LE); subst.
+      destruct s''; intuition auto.
+      destruct k; intuition auto.
+  Qed.
+
+  Lemma le_lt_eq {T} (s s' : streamA T) :
+    le_streamA s s' ↔
+    s = s' ∨ lt_streamA s s'.
+  Proof.
+    revert s'. induction s; simpl.
+    { destruct s'; destruct k; simpl; intuition auto. }
+    destruct s'; destruct k; simpl; intuition auto; subst; try congruence;
+    try rewrite IHs in *; intuition auto; subst; eauto.
+    match goal with H : _ |- _ => inversion H; subst; eauto end.
   Qed.
 
   Lemma eq_stream_le_streamA {T} (s s' : stream T) (EQ : eq_stream s s')
   : ∀ n, ∃ m,
-      le_streamF le_streamA (nth_approx s n) (nth_approx s' m).
+      le_streamA (nth_approx s n) (nth_approx s' m).
   Proof.
     intros; revert s s' EQ; induction n; simpl; intros.
-    - exists 0; eauto.
+    - exists 0; simpl; eauto.
     - punfold EQ.
       unfold eq_streamF in EQ.
       destruct (obs_st s) eqn:OBS.
@@ -144,14 +253,176 @@ Module StreamTest.
         simpl. rewrite OBS'. eauto. }
   Qed.
 
+  (* s = s' ↔ ⌊ s ⌋ ≈ ⌊ s' ⌋ *)
   Lemma eq_stream_iff_eq_streamA {T} (s s' : stream T) :
     eq_stream s s' ↔
-    (∀ n, ∃ m, le_streamF le_streamA (nth_approx s n) (nth_approx s' m)) ∧
-    (∀ n, ∃ m, le_streamF le_streamA (nth_approx s' n) (nth_approx s m)).
+    (∀ n, ∃ m, le_streamA (nth_approx s n) (nth_approx s' m)) ∧
+    (∀ n, ∃ m, le_streamA (nth_approx s' n) (nth_approx s m)).
   Proof.
     split; [|intro; apply eq_streamA_eq_stream; intuition auto].
     intro EQ. apply eq_stream_sym in EQ as EQ'.
     split; apply eq_stream_le_streamA; auto.
+  Qed.
+
+  Definition stable {T} (s : nat → streamA T) :=
+    ∀ n, lt_streamA (s n) (s (S n)) ∨ ∀ m (LE : n ≤ m), s n = s m
+  .
+
+  Definition stable_le {T} (s : nat → streamA T) (ST : stable s)
+  : ∀ n m (LE : n ≤ m), le_streamA (s n) (s m).
+  Proof.
+    intro. revert s ST. induction n; simpl.
+    { intros. revert s ST. clear LE.
+      induction m; simpl; [intros; apply le_streamA_refl|].
+      intros. eapply le_streamA_trans; [apply IHm|]; auto.
+      rewrite le_lt_eq. destruct (ST m); eauto. }
+    intros. destruct m; simpl in *; [lia|].
+    apply IHn with (s := fun n => s (S n)); try lia.
+    intro n'. destruct (ST (S n')) as [?|EQ]; eauto.
+    right. intros m' LE'.
+    assert (n' = m' ∨ S n' ≤ m') as [?|?] by lia; eauto.
+  Qed.
+
+  Lemma nth_approx_stable {T} (s : stream T) :
+    stable (nth_approx s).
+  Proof.
+    intro. revert s. induction n; intros; simpl.
+    { destruct (obs_st s) eqn:OBS; intuition auto. right.
+      induction m; simpl; eauto; rewrite OBS; auto. }
+    destruct (obs_st s) eqn:OBS; simpl.
+    { right. induction m; simpl; eauto; rewrite OBS; auto. }
+    destruct (obs_st tl) eqn:OBS'.
+    - right. induction m; [lia|].
+      intros. simpl. rewrite OBS. do 2 f_equal.
+      destruct (IHn tl).
+      { simpl in *; rewrite OBS' in *.
+        destruct (nth_approx tl n); destruct k; simpl in *; intuition. }
+      assert (n ≤ m) by lia; eauto.
+    - destruct (IHn tl).
+      { simpl in *; rewrite OBS' in *. eauto. }
+      right. intros. destruct m; [lia|].
+      simpl in *; rewrite OBS. do 2 f_equal.
+      assert (n ≤ m) by lia; eauto.
+  Qed.
+
+  CoFixpoint mkStream' {T} (s : nat → streamA T) : stream T :=
+    match s 1 with
+    | Str snil => {| obs_st := snil |} (* s 0 must be nil *)
+    | Str (scons hd _) => {|
+      obs_st := scons hd (mkStream' (fun n =>
+        match s (S n) with
+        | Str snil => Str snil
+        | Str (scons _ tl) => tl
+        end))
+      |}
+    end.
+
+  Lemma mkStream'_ext {T} (s s' : nat → streamA T) (EXT : ∀ n, s n = s' n) :
+    ∀ d, nth_approx (mkStream' s) d = nth_approx (mkStream' s') d.
+  Proof.
+    intros. revert s s' EXT. induction d; intros; simpl; eauto.
+    rewrite <- EXT. destruct (s 1); destruct k; simpl; eauto.
+    erewrite IHd; eauto; simpl.
+    intros. rewrite EXT. eauto.
+  Qed.
+
+  Fixpoint depth {T} (s : streamA T) :=
+    match s with
+    | Str snil => 0
+    | Str (scons _ tl) => S (depth tl)
+    end.
+
+  Lemma stable_tl {T} (s : nat → streamA T) (INC : stable s)
+    (NONNIL : s 1 ≠ Str snil)
+  : stable (fun n =>
+      match s (S n) with
+      | Str snil => Str snil
+      | Str (scons _ tl) => tl
+      end).
+  Proof.
+    destruct (s 1) eqn:EQ; destruct k. congruence.
+    intro n'.
+    specialize (stable_le s INC 1 (S n') ltac:(lia)).
+    specialize (stable_le s INC 1 (S (S n')) ltac:(lia)).
+    rewrite EQ.
+    destruct (s (S n')) eqn:OBS; destruct k; simpl.
+    destruct 2.
+    destruct (s (S (S n'))) eqn:OBS'; destruct k; simpl.
+    destruct 1.
+    intuition auto; subst.
+    destruct (INC (S n')) as [LT|EQ''].
+    rewrite OBS, OBS' in LT. simpl in LT. left; apply LT.
+    right. intros.
+    rewrite <- EQ'' by lia.
+    rewrite OBS. auto.
+  Qed.
+
+  Lemma le_streamA_nth_approxA {T} (s s' : streamA T) (LE : le_streamA s s')
+  : ∀ d (LEd : d ≤ depth s), nth_approxA s d = nth_approxA s' d.
+  Proof.
+    intros. revert s' LE d LEd.
+    induction s; simpl.
+    { destruct s'; destruct d; simpl; intros; auto; lia. }
+    destruct s'; destruct d; simpl; intros; auto.
+    destruct k; destruct LE; subst.
+    erewrite IHs; eauto. lia.
+  Qed.
+
+  Lemma le_streamA_depth {T} (s s' : streamA T) (LE : le_streamA s s')
+  : depth s ≤ depth s'.
+  Proof.
+    revert s' LE. induction s; simpl; [lia|].
+    destruct s'; destruct k; intros; destruct LE; subst.
+    simpl. assert (depth s ≤ depth tl) by auto.
+    lia.
+  Qed.
+
+  Lemma nth_approxA_depth {T} (s : streamA T)
+  : ∀ d (LE : depth s ≤ d), nth_approxA s d = s.
+  Proof.
+    induction s; simpl; destruct d; simpl; auto.
+    - lia.
+    - intros. repeat f_equal. apply IHs. lia.
+  Qed.
+
+  Lemma stable_approx_mkStream' {T} (s : nat → streamA T) (INC : stable s)
+  : ∀ d n (DEPTH : d ≤ depth (s n)),
+      nth_approxA (s n) d = nth_approx (mkStream' s) d.
+  Proof.
+    intro. revert s INC. induction d; simpl.
+    - intros. destruct (s n); destruct k; simpl in *; congruence.
+    - intros. destruct (s n) eqn:EQ; destruct k; simpl in *. lia.
+      destruct (s 1) eqn:EQ'; destruct k; simpl.
+      { assert (∀ n, s n = Str snil) as RR.
+        { specialize (INC 0). destruct INC as [LT|STABLE].
+          rewrite EQ' in LT. destruct (s 0); destruct k; destruct LT.
+          rewrite <- STABLE in EQ' by lia. intros. rewrite <- STABLE by lia. auto. }
+        rewrite RR in EQ. congruence. }
+      set (s' m :=
+        match s (S m) with
+        | Str snil => Str snil
+        | Str (scons _ tl') => tl'
+        end).
+      assert (stable s') as ST' by (apply stable_tl; auto; congruence).
+      specialize (IHd s' ST') as IHd'.
+      destruct n.
+      { specialize (stable_le s INC 0 1 ltac:(lia)).
+        rewrite EQ, EQ'; simpl; intros (? & LE); subst.
+        do 2 f_equal; auto.
+        rewrite <- (IHd' 0); subst s'; simpl; rewrite EQ'.
+        apply le_streamA_nth_approxA; auto. lia.
+        transitivity (depth tl). lia. apply le_streamA_depth; auto. }
+      specialize (stable_le s INC 1 (S n) ltac:(lia)).
+      rewrite EQ, EQ'; simpl; intros (? & _); subst.
+      do 2 f_equal; auto.
+      rewrite <- (IHd' n); subst s'; simpl; rewrite EQ; auto. lia.
+  Qed.
+
+  Lemma stable_mkStream' {T} (s : nat → streamA T) (INC : stable s)
+  : ∀ n, s n = nth_approx (mkStream' s) (depth (s n)).
+  Proof.
+    intros. erewrite <- stable_approx_mkStream'; auto.
+    symmetry. apply nth_approxA_depth. auto.
   Qed.
 End StreamTest.
 
@@ -429,7 +700,7 @@ Lemma le_trace_refl :
   (∀ t : trace, le_trace t t).
 Proof. cbn zeta. apply val_ind; simpl; eauto. Qed.
 
-Lemma le_trace'_trans :
+Lemma le_trace_trans :
   let le_trF := le_traceF le_trace in
   let le_vl := rel_vl le_trace in
   let le_nv := rel_nv le_vl in
@@ -464,10 +735,10 @@ Proof.
     subst; destruct t''; intuition eauto
   end.
   match reverse goal with
-  | H : _ |- _ => destruct (H n) as (m & LEt)
+  | H : _ |- _ => destruct (H n) as (m & ?)
   end.
   match goal with
-  | H : _ |- _ => destruct (H m) as (l & LEt')
+  | H : _ |- _ => destruct (H m) as (? & ?)
   end.
   eauto.
 Qed.
@@ -716,9 +987,9 @@ Lemma eval_monotonicity : ∀ m n (GE : m ≤ n) e k k' σ v
 Proof.
   induction m; simpl; [congruence|].
   intros [|n]. lia.
-  intros. apply PeanoNat.Nat.succ_le_mono in GE.
-  specialize (IHm _ GE).
-  eapply ev_monotonicity; eauto.
+  intros.
+  eapply ev_monotonicity with (f := eval m) (f' := eval n); eauto.
+  intros. eapply IHm; eauto. lia.
 Qed.
 
 Definition bind_link_shdw n s :=
