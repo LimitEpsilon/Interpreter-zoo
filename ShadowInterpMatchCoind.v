@@ -463,11 +463,11 @@ Section ind.
           (Pvl : Value → Prop)
           (PtrF : TraceF → Prop).
   Context (PRd : ∀ x, Pshdw (Rd x))
-          (PAp : ∀ s v, Pshdw s → Pvl v → Pshdw (Ap s v)).
+          (PAp : ∀ s v (IHs : Pshdw s) (IHv : Pvl v), Pshdw (Ap s v)).
   Context (PInit : Pnv Init)
-          (Pnv_bd : ∀ x v σ, Pvl v → Pnv σ → Pnv (nv_bd x v σ)).
-  Context (Pvl_sh : ∀ s, Pshdw s → Pvl (vl_sh s))
-          (Pvl_clos : ∀ x k σ, Ptr k → Pnv σ → Pvl (vl_clos x k σ)).
+          (Pnv_bd : ∀ x v σ (IHv : Pvl v) (IHσ : Pnv σ), Pnv (nv_bd x v σ)).
+  Context (Pvl_sh : ∀ s (IHs : Pshdw s), Pvl (vl_sh s))
+          (Pvl_clos : ∀ x k σ (IHk : Ptr k) (IHσ : Pnv σ), Pvl (vl_clos x k σ)).
   Context (PStuck : PtrF Stuck)
           (PRet : ∀ v (IHv : Pvl v), PtrF (Ret v))
           (PStep : ∀ σ t (IHσ : Pnv σ) (IHt : PtrF t), PtrF (Step σ t)).
@@ -713,6 +713,14 @@ Section wf.
       | Ret v => wf_vl wf_tr v
       | Step σ k => wf_nv (wf_vl wf_tr) σ ∧ wf k
       end.
+
+  Definition wf_shadow {tr} (wf_tr : tr → Prop) :=
+    wf_shdw (wf_vl wf_tr)
+  .
+
+  Definition wf_env {tr} (wf_tr : tr → Prop) :=
+    wf_nv (wf_vl wf_tr)
+  .
 End wf.
 
 Fixpoint le_trace (t t' : trace) :=
@@ -862,12 +870,10 @@ Fixpoint link_traceF n :=
   match n with
   | 0 => fun _ _ _ => Stuck
   | S n' =>
-    link_tr (fun σ0 '(Tr _ t') => link_traceF n' σ0 (t' n'))
+    link_tr (fun σ0 '(Tr _ t') k => Step σ0 (link_traceF n' σ0 (t' n') k))
   end.
 
-Definition link_trace n σ0 '(Tr _ t') :=
-  link_traceF n σ0 (t' n)
-.
+Definition link_trace n σ0 '(Tr _ t') k := Step σ0 (link_traceF n σ0 (t' n) k).
 
 Definition link_value n := link_vl (link_trace n).
 
@@ -887,16 +893,16 @@ Fixpoint denote (t : term) k {struct t} : nat → traceF trace :=
   match t with
   | Var x =>
     let r := vl_sh (Rd x) in
-    fun _ => Step Init (k r)
+    fun _ => k r
   | Lam x e =>
     let E := Tr e (denote e Ret) in
     let r := vl_clos x E Init in
-    fun _ => Step Init (k r)
+    fun _ => k r
   | App fn arg => fun n =>
     let k_fn f :=
       let k_arg a := ap (link_trace n) f a k in
       denote arg k_arg n in
-    Step Init (denote fn k_fn n)
+    denote fn k_fn n
   end.
 
 Definition wf_trace t :=
@@ -965,7 +971,7 @@ Proof.
   apply (pre_val_ind _ (fun _ => I));
   cbv [link_shadow_ext link_env_ext link_vl_ext link_tr_ext];
   simpl; eauto.
-  - intros. apply H. intros. apply H0. destruct v0; eauto.
+  - intros. apply IHs. intros v'. apply IHv. destruct v'; eauto.
   - intros. apply IHσ. intros. f_equal. auto.
 Qed.
 
@@ -976,7 +982,8 @@ Proof.
   simpl; intros;
     match goal with t : trace |- _ => destruct t end;
     auto.
-  apply pre_link_ext; auto.
+  simpl. f_equal.
+  apply (pre_link_ext _ IHn); auto.
 Qed.
 
 Definition link_shadow_bind link s :=
@@ -1014,11 +1021,11 @@ Proof.
   apply (pre_val_ind _ (fun _ => I));
   cbv [link_shadow_bind link_env_bind link_vl_bind link_tr_bind];
   simpl; intros; eauto.
-  - rewrite H. apply EXTs. intros.
-    rewrite H0. apply EXTv. destruct v0; auto.
+  - rewrite IHs. apply EXTs. intros v'.
+    rewrite IHv. apply EXTv. destruct v'; auto.
     intros. apply LINK_BIND.
-  - rewrite H. apply EXTv. intros.
-    rewrite H0. auto.
+  - rewrite IHv. apply EXTv. intros.
+    rewrite IHσ. auto.
   - unfold link_env in *. rewrite IHσ. apply EXTσ. intros.
     simpl. f_equal. auto.
 Qed.
@@ -1028,6 +1035,7 @@ Lemma link_bind n :
 Proof.
   induction n; simpl; destruct t as [e t'];
   cbv [link_trace_bind]; simpl; auto.
+  intros. f_equal.
   apply (pre_link_bind _ (link_ext n) IHn).
 Qed.
 
@@ -1042,7 +1050,7 @@ Qed.
 Lemma denote_ext e :
   ∀ k k' (EXT : ∀ v, k v = k' v) n, denote e k n = denote e k' n.
 Proof.
-  induction e; simpl; intros; f_equal; auto.
+  induction e; simpl; intros; auto.
   apply IHe1; intros.
   apply IHe2; intros. unfold ap.
   destruct v; auto. pose proof (link_ext n t k k').
@@ -1184,118 +1192,207 @@ Fixpoint lift_value v :=
 
 Definition lift_env := lift_nv lift_value.
 
-Fixpoint ret {T} (t : traceF T) :=
+Fixpoint dest {T} (t : traceF T) :=
   match t with
   | Stuck => None
   | Ret v => Some v
-  | Step _ t' => ret t'
+  | Step _ t' => dest t'
   end.
 
-(*(RET : ∀ v, ret (T := trace) (link_env link Σ0 σ0 (fun _ => Ret v)) ≠ None)*)
-Definition link_shadow_link link Σ0 σ0 (s : shadow trace) :=
-  ∀ k K
-    (CONT : ∀ v, link_tr link Σ0 (k v) Ret = link_vl link Σ0 v K),
-    link_tr link Σ0 (link_shadow link σ0 s k) Ret =
-    link_env link Σ0 σ0 (fun σ' => link_shadow link σ' s K)
-.
-Definition link_env_link link Σ0 σ0 (σ : env trace) :=
-  ∀ k K
-    (CONT : ∀ σ'', link_tr link Σ0 (k σ'') Ret = link_env link Σ0 σ'' K),
-    link_tr link Σ0 (link_env link σ0 σ k) Ret =
-    link_env link Σ0 σ0 (fun σ' => link_env link σ' σ K)
-.
-Definition link_vl_link link Σ0 σ0 (v : vl trace) :=
-  ∀ k K
-    (CONT : ∀ v', link_tr link Σ0 (k v') Ret = link_vl link Σ0 v' K),
-    link_tr link Σ0 (link_vl link σ0 v k) Ret =
-    link_env link Σ0 σ0 (fun σ' => link_vl link σ' v K)
-.
-Definition link_tr_link link Σ0 σ0 (t : traceF trace) :=
-  ∀ k K
-    (CONT : ∀ v', link_tr link Σ0 (k v') Ret = link_vl link Σ0 v' K),
-    link_tr link Σ0 (link_tr link σ0 t k) Ret =
-    link_env link Σ0 σ0 (fun σ' => link_tr link σ' t K)
-.
-Definition link_trace_link link Σ0 σ0 (t : trace) :=
-  ∀ k K
-    (CONT : ∀ v', link_tr link Σ0 (k v') Ret = link_vl link Σ0 v' K),
-    link_tr link Σ0 (link σ0 t k) Ret =
-    link_env link Σ0 σ0 (fun σ' => link σ' t K)
+Definition Ret_env σ :=
+  Ret (vl_clos "" (Tr (Var "") (fun _ => Stuck)) σ)
 .
 
-Lemma link_rd link
-  (LINK_EXT : ∀ t, link_trace_ext link t)
-  (LINK_BIND : ∀ t, link_trace_bind link t)
-  (Σ0 : env trace) :
-  ∀ σ0 k x
-    (RET : ∀ v, ret (link_env link Σ0 σ0 (fun _ => Ret v)) ≠ None),
-    link_vl link Σ0 (rd x σ0) k = link_env link Σ0 σ0 (fun σ' => k (rd x σ')).
+Definition link_shadow_dest link (s : shadow trace) :=
+  ∀ k σ0,
+    dest (link_shadow link σ0 s k) =
+    match dest (link_shadow link σ0 s Ret) with
+    | Some v => dest (k v)
+    | None => None
+    end.
+Definition link_env_dest link (σ : env trace) :=
+  ∀ k σ0,
+    dest (link_env link σ0 σ k) =
+    match dest (link_env link σ0 σ Ret_env) with
+    | Some (vl_clos _ _ σ') => dest (k σ')
+    | _ => None
+    end.
+Definition link_vl_dest link (v : vl trace) :=
+  ∀ k σ0,
+    dest (link_vl link σ0 v k) =
+    match dest (link_vl link σ0 v Ret) with
+    | Some v' => dest (k v')
+    | None => None
+    end.
+Definition link_tr_dest link (t : traceF trace) :=
+  ∀ k σ0,
+    dest (link_tr link σ0 t k) =
+    match dest (link_tr link σ0 t Ret) with
+    | Some v => dest (k v)
+    | None => None
+    end.
+Definition link_trace_dest link (t : trace) :=
+  ∀ (k : vl trace → traceF trace) (σ0 : env trace),
+    dest (link σ0 t k) =
+    match dest (link σ0 t Ret) with
+    | Some v => dest (k v)
+    | None => None
+    end.
+
+Ltac des_ap :=
+  match goal with
+  | |- context [ap _ ?v _ _] => destruct v
+  end.
+
+Lemma pre_link_dest link (LINK_DEST : ∀ t, link_trace_dest link t) :
+  (∀ s, link_shadow_dest link s) ∧
+  (∀ σ, link_env_dest link σ) ∧
+  (∀ v, link_vl_dest link v) ∧
+  (∀ t, link_tr_dest link t).
 Proof.
-  pose proof (pre_link_ext _ LINK_EXT) as (_ & _ & EXTv & _).
-  pose proof (pre_link_bind _ LINK_EXT LINK_BIND) as (_ & BINDσ & BINDv & _).
-  cbv [link_env_ext link_vl_bind link_env_bind] in *.
+  apply (pre_val_ind _ (fun _ => I));
+  cbv [link_shadow_dest link_env_dest link_vl_dest link_tr_dest];
+  simpl; intros; eauto.
+  - rewrite IHs. symmetry. rewrite IHs.
+    destruct (dest (link_shadow _ _ _ _)); auto.
+    rewrite IHv. symmetry. rewrite IHv.
+    destruct (dest (link_vl _ _ _ _)); auto.
+    des_ap; simpl; auto.
+    apply LINK_DEST.
+  - rewrite IHv. symmetry. rewrite IHv.
+    destruct (dest (link_vl _ _ _ _)); auto.
+    rewrite IHσ. symmetry. rewrite IHσ.
+    destruct (dest (link_env _ _ _ _)); auto.
+    match goal with |- context [match ?x with _ => _ end] => destruct x end;
+    auto.
+  - unfold link_env in *. rewrite IHσ. symmetry. rewrite IHσ.
+    destruct (dest (link_nv _ _ _ _)); auto.
+    destruct v; auto.
+  - unfold link_env in *. rewrite IHσ. symmetry. rewrite IHσ.
+    destruct (dest (link_nv _ _ _ _)); auto.
+    destruct v; auto.
+    simpl. symmetry. auto.
+Qed.
+
+Lemma link_dest n :
+  ∀ t, link_trace_dest (link_trace n) t.
+Proof.
+  induction n; simpl; destruct t as [e t'];
+  cbv [link_trace_dest]; simpl; auto.
+  apply (pre_link_dest _ IHn).
+Qed.
+
+Definition link_shadow_link link (s : shadow trace) :=
+  ∀ Σ0 σ0 k K
+    (CONT : ∀ v, dest (link_tr link Σ0 (k v) Ret) = dest (link_vl link Σ0 v K)),
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ) =>
+      dest (link_tr link Σ0 (link_shadow link σ0 s k) Ret) =
+      dest (link_shadow link σ s K)
+    | _ => True
+    end.
+Definition link_env_link link (σ : env trace) :=
+  ∀ Σ0 σ0 k K
+    (CONT : ∀ σ', dest (link_tr link Σ0 (k σ') Ret) = dest (link_env link Σ0 σ' K)),
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ') =>
+      dest (link_tr link Σ0 (link_env link σ0 σ k) Ret) =
+      dest (link_env link σ' σ K)
+    | _ => True
+    end.
+Definition link_vl_link link (v : vl trace) :=
+  ∀ Σ0 σ0 k K
+    (CONT : ∀ v, dest (link_tr link Σ0 (k v) Ret) = dest (link_vl link Σ0 v K)),
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ) =>
+      dest (link_tr link Σ0 (link_vl link σ0 v k) Ret) =
+      dest (link_vl link σ v K)
+    | _ => True
+    end.
+Definition link_tr_link link (t : traceF trace) :=
+  ∀ Σ0 σ0 k K
+    (CONT : ∀ v, dest (link_tr link Σ0 (k v) Ret) = dest (link_vl link Σ0 v K)),
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ) =>
+      dest (link_tr link Σ0 (link_tr link σ0 t k) Ret) =
+      dest (link_tr link σ t K)
+    | _ => True
+    end.
+Definition link_trace_link link (t : trace) :=
+  ∀ Σ0 σ0 k K
+    (CONT : ∀ v, dest (link_tr link Σ0 (k v) Ret) = dest (link_vl link Σ0 v K)),
+    dest (link_tr link Σ0 (link σ0 t k) Ret) =
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ) => dest (link σ t K)
+    | _ => None
+    end.
+
+Lemma link_rd link (LINK_DEST : ∀ t, link_trace_dest link t) Σ0 :
+  ∀ σ0 k x,
+    match dest (link_env link Σ0 σ0 Ret_env) with
+    | Some (vl_clos _ _ σ) =>
+      dest (link_vl link Σ0 (rd x σ0) k) = dest (k (rd x σ))
+    | _ => True
+    end.
+Proof.
   refine (fix go σ0 :=
     match σ0 with
-    | Init => fun k x RET => _
-    | nv_bd x' V Σ' => fun k x RET => _
+    | Init => fun k x => eq_refl
+    | nv_bd x' V Σ' => fun k x => _
     end).
-  { reflexivity. }
-Abort.
+  specialize (go Σ').
+  simpl.
+  pose proof (pre_link_dest _ LINK_DEST) as (RRs & RRσ & RRv & RRt).
+  rewrite RRv. destruct (dest (link_vl _ _ _ _)) eqn:EQ; auto.
+  rewrite RRσ. destruct (dest (link_env _ _ _ _)) as [v'|]; auto.
+  destruct v'; auto. simpl.
+  destruct (_ =? _); auto.
+  rewrite RRv. rewrite EQ. reflexivity.
+Qed.
 
-Lemma pre_link_link link Σ0 σ0
-  (LINK_EXT : ∀ t, link_trace_ext link t)
-  (LINK_LINK : ∀ t, link_trace_link link Σ0 σ0 t)
-  (RET : ∀ v, ret (link_env link Σ0 σ0 (fun _ => Ret v)) ≠ None) :
-  (∀ s, link_shadow_link link Σ0 σ0 s) ∧
-  (∀ σ, link_env_link link Σ0 σ0 σ) ∧
-  (∀ v, link_vl_link link Σ0 σ0 v) ∧
-  (∀ t, link_tr_link link Σ0 σ0 t).
+Lemma pre_link_link link
+  (LINK_DEST : ∀ t, link_trace_dest link t)
+  (LINK_LINK : ∀ t, link_trace_link link t) :
+  (∀ s, link_shadow_link link s) ∧
+  (∀ σ, link_env_link link σ) ∧
+  (∀ v, link_vl_link link v) ∧
+  (∀ t, link_tr_link link t).
 Proof.
-  pose proof (pre_link_ext _ LINK_EXT) as (EXTs & EXTσ & EXTv & EXTt).
+  pose proof (pre_link_dest _ LINK_DEST) as (RRs & RRσ & RRv & RRt).
   apply (pre_val_ind _ (fun _ => I));
-  cbv [link_shadow_link link_env_link link_vl_link link_tr_link];
+  cbv [link_shadow_link link_env_link link_vl_link link_tr_link] in *;
   simpl; intros; eauto.
-  - rewrite CONT. 
-  - rewrite H. apply EXTs. intros.
-    rewrite H0. apply EXTv. destruct v0; auto.
-    intros. apply LINK_BIND.
-  - rewrite H. apply EXTv. intros.
-    rewrite H0. auto.
-  - unfold link_env in *. rewrite IHσ. apply EXTσ. intros.
-    simpl. f_equal. auto.
-Qed.
-
-Lemma lift_link e :
-  ∀ σ0 Σ n,
-  lift_trace (eval n) σ0 (link_traceF (S n) Σ (denote e Ret n) Ret) =
-  match lift_env (eval n) σ0 Σ with
-  | Some Σ0 => ev (eval n) e Some Σ0
-  | None => None
-  end.
-Proof.
-  induction e; simpl; intros.
-  { destruct (lift_env _ _ _) eqn:LIFTΣ; auto. erewrite lift_rd; eauto.
-    destruct (rd' _ _); auto. }
-  { unfold lift_env. destruct (lift_nv _ _ _); auto. }
-  intros.
-  rewrite denote_bind_Ret.
-  erewrite bind_ext; [|intros; rewrite denote_bind_Ret; reflexivity].
-Qed.
-
-
-Definition link_vl_bind link v :=
-  ∀ k k' σ0,
-    bind k' (link_vl link σ0 v k) = link_vl link σ0 v (fun v' => bind k' (k v'))
-.
-Definition link_tr_bind link t :=
-  ∀ k k' σ0,
-    bind k' (link_tr link σ0 t k) = link_tr link σ0 t (fun v => bind k' (k v))
-.
-Definition link_trace_bind link (t : trace) :=
-  ∀ k k' (σ0 : env trace),
-    bind k' (link σ0 t k) = link σ0 t (fun v : vl trace => bind k' (k v))
-.
-
+  - specialize (link_rd link LINK_DEST Σ0 σ0 Ret x).
+    destruct (dest (link_env _ _ _ _)) as [v'|]; auto.
+    destruct v'; auto. intros RR.
+    specialize (CONT (rd x σ0)).
+    rewrite RRv, RR in CONT. rewrite CONT; auto.
+  - specialize (IHs Σ0 σ0). specialize (IHv Σ0 σ0).
+    destruct (dest (link_env _ _ _ _)) as [v'|] eqn:EQσ; auto.
+    destruct v'; auto.
+    erewrite IHs; eauto.
+    intros f. erewrite IHv.
+    { instantiate (1 := fun a => link_vl link Σ0 f (fun f => ap link f a K)).
+      rewrite (RRv v). rewrite (RRv f).
+      destruct (dest (link_vl _ _ v _)) eqn:EQv; try rewrite RRv;
+      destruct (dest (link_vl _ _ f _)) eqn:EQf; simpl; auto;
+      rewrite (RRv v), EQv; auto. }
+    intros a. simpl. rewrite RRv.
+    unfold ap. destruct f as [f'|x' t' σ']; simpl.
+    { rewrite CONT. simpl.
+      unfold link_shadow_dest, link_shadow in RRs. rewrite RRs.
+      destruct (dest (link_shdw _ _ _ f' _)) eqn:EQf'. rewrite RRv.
+      all: destruct (dest (link_vl _ _ _ _)); auto; rewrite RRs, EQf'; auto. }
+    { specialize (LINK_LINK t' Σ0 (nv_bd x' a σ')).
+      simpl in *. rewrite RRv in LINK_LINK.
+      erewrite LINK_LINK; eauto.
+      destruct (dest (link_vl _ _ _ _)); auto.
+      rewrite RRσ. symmetry.
+      cbv [link_env_dest link_env] in *. rewrite RRσ.
+      destruct (dest (link_nv _ _ σ' Ret_env)) as [v'|]; auto.
+      destruct v'; auto. }
+  -
+Abort.
 
 Lemma ev_monotonicity : ∀ e k k' σ v f f'
   (K_MONO : ∀ v w, k v = Some w → k' v = Some w)
@@ -1325,95 +1422,4 @@ Proof.
   eapply ev_monotonicity with (f := eval m) (f' := eval n); eauto.
   intros. eapply IHm; eauto. lia.
 Qed.
-
-Lemma base_case e :
-  ∀ Σ0 k K
-    (LIFTK : ∀ V, lift_trace (link_trace 1 Σ0 (K V) Ret) =
-      match lift_trace (link_value 1 Σ0 V Ret) with
-      | Some v => k v
-      | None => None
-      end),
-    lift_trace (link_trace 1 Σ0 (denote e K 0) Ret) =
-    match lift_env Σ0 with
-    | Some σ0 => ev (eval 0) e k σ0
-    | None => None
-    end.
-Proof.
-  induction e; simpl in *.
-  { intros. erewrite LIFTK. destruct (lift_env Σ0) eqn: LIFTΣ; auto.
-    simpl. erewrite lift_rd; eauto. }
-  { intros. erewrite LIFTK. simpl. unfold lift_env.
-    destruct (lift_nv _ Σ0); auto. }
-  intros.
-  destruct (lift_env Σ0) as [σ0|] eqn:LIFTΣ; eauto.
-  erewrite IHe1. rewrite LIFTΣ. eauto.
-  intros. simpl. destruct V as [f' |x e t']; simpl.
-  erewrite IHe2.
-  simpl. erewrite IHe2.
-  specialize (IHe1 Σ0). rewrite LIFTΣ in IHe1.
-  rewrite denote_bind_Ret.
-  pose proof (link_bind_Ret 1) as RR. simpl in RR.
-  rewrite RR. clear RR.
-  destruct (pre_link_bind _ (link_ext 0) (link_bind 0)) as (_ & _ & _ & RR).
-  simpl in RR. rewrite RR.
-  simpl in *.
-  rewrite 
-  rewrite IHe1.
-  rewrite 
-  erewrite IHe1; auto. simpl.
-  intros. erewrite IHe2; cycle 1. instantiate (1 := fun v =>
-    match V with
-    | vl_sh f' => _
-    | _ => None
-    end).
-  simpl.
-  { intros. destruct V; simpl in *. rewrite CONT; simpl; auto.
-    destruct (lift_vl _ _ _); auto.
-    destruct t; destruct (lift_vl _ _ _); auto. }
-  simpl. destruct V as [f'|x (e & t')]; simpl; cycle 1.
-  simpl in WF. destruct WF as (? & WF); subst.
-Admitted.
-
-Lemma test e :
-  ∀ n σ0 k K
-    (LIFT : ∀ V (WF : wf_vl wf_trace V),
-      lift_trace (eval n) (K V) σ0 =
-      match lift_vl (eval n) V σ0 with
-      | None => None
-      | Some v => k v
-      end),
-    ev (ev (eval n)) e k σ0 = lift_trace (eval n) (denote e K n) σ0.
-Proof.
-  induction e; simpl.
-  { intros. rewrite LIFT; simpl; auto. }
-  { intros. rewrite LIFT; simpl; auto. }
-  intros. eapply IHe1. intros.
-  destruct (lift_vl _ _ _) eqn:LIFTV.
-  - symmetry. apply IHe2. intros V' WF'.
-    destruct V as [f'|x (e & t')]; simpl.
-    { rewrite LIFT; simpl; auto.
-      simpl in LIFTV. rewrite LIFTV.
-      destruct (lift_vl _ V' σ0) eqn:LIFTV'; auto.
-      destruct v. admit. }
-  induction n; simpl; [apply base_case|].
-  induction e; simpl; auto.
-  { intros. rewrite LIFT; simpl; auto. }
-  { intros. rewrite LIFT; simpl; auto. }
-  intros. eapply IHe1. intros.
-  destruct (lift_vl _ _ _) eqn:LIFTV.
-  - symmetry. apply IHe2. intros.
-    destruct V; simpl.
-    { rewrite LIFT; simpl; auto.
-      replace (lift_shdw _ _ s σ0) with (Some v).
-      match goal with |- _ = match ?x with _ => _ end => destruct x end;
-      auto.
-      destruct v; auto. admit. }
-    destruct t as (? & t'). simpl in LIFTV.
-    destruct (lift_nv (lift_vl (ev (eval n))) σ σ0) as [Σ|] eqn:LIFTΣ;
-    try congruence.
-    simpl in WF. destruct WF as (? & WF); subst.
-    inversion LIFTV; subst; clear LIFTV.
-    admit.
-  - 
-Abort.
 
