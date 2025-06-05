@@ -870,13 +870,21 @@ Section link.
 End link.
 
 Fixpoint link_traceF n :=
+  link_tr (fun σ0 '(Tr _ t') k => Step σ0
+    match n with
+    | 0 => Stuck
+    | S n' => link_traceF n' σ0 (t' n') k
+    end).
+
+Definition link_trace n σ0 '(Tr _ t') k := Step σ0
   match n with
-  | 0 => fun _ _ _ => Stuck
-  | S n' =>
-    link_tr (fun σ0 '(Tr _ t') k => Step σ0 (link_traceF n' σ0 (t' n') k))
+  | 0 => Stuck
+  | S n' => link_traceF n' σ0 (t' n') k
   end.
 
-Definition link_trace n σ0 '(Tr _ t') k := Step σ0 (link_traceF n σ0 (t' n) k).
+Lemma unfold_link_traceF n :
+  link_traceF n = link_tr (link_trace n).
+Proof. destruct n; reflexivity. Qed.
 
 Definition link_value n := link_vl (link_trace n).
 
@@ -978,6 +986,7 @@ Proof.
     match goal with t : trace |- _ => destruct t end;
     auto.
   simpl. f_equal.
+  rewrite unfold_link_traceF.
   apply (pre_link_ext _ IHn); auto.
 Qed.
 
@@ -1031,13 +1040,14 @@ Proof.
   induction n; simpl; destruct t as [e t'];
   cbv [link_trace_bind]; simpl; auto.
   intros. f_equal.
+  rewrite unfold_link_traceF.
   apply (pre_link_bind _ (link_ext n) IHn).
 Qed.
 
 Lemma link_bind_Ret n σ t k :
   link_traceF n σ t k = bind k (link_traceF n σ t Ret).
 Proof.
-  destruct n; simpl; auto.
+  rewrite unfold_link_traceF.
   destruct (pre_link_bind _ (link_ext n) (link_bind n)) as (_ & _ & _ & ->).
   auto.
 Qed.
@@ -1274,7 +1284,36 @@ Lemma link_dest n :
 Proof.
   induction n; simpl; destruct t as [e t'];
   cbv [link_trace_dest]; simpl; auto.
+  rewrite unfold_link_traceF.
   apply (pre_link_dest _ IHn).
+Qed.
+
+Definition link_shdw_Init link (s : shadow trace) :=
+  ∀ k, link_shdw link Init s k = k (vl_sh s)
+.
+Definition link_nv_Init link (σ : env trace) :=
+  ∀ k, link_nv link Init σ k = k σ
+.
+Definition link_vl_Init link (v : vl trace) :=
+  ∀ k, link_vl link Init v k = k v
+.
+Definition link_tr_Init link (t : traceF trace) :=
+  ∀ k, link_tr link Init t k = bind k t
+.
+
+(* Init is the left identity of linking *)
+Lemma link_Init link :
+  (∀ s, link_shdw_Init link s) ∧
+  (∀ σ, link_nv_Init link σ) ∧
+  (∀ v, link_vl_Init link v) ∧
+  (∀ t, link_tr_Init link t).
+Proof.
+  apply (pre_val_ind _ (fun _ => I));
+  cbv [link_shdw_Init link_nv_Init link_vl_Init link_tr_Init];
+  simpl; intros; eauto.
+  - rewrite IHs, IHv; auto.
+  - rewrite IHv, IHσ; auto.
+  - rewrite IHσ. f_equal. auto.
 Qed.
 
 Definition link_shdw_link link (s : shadow trace) :=
@@ -1378,13 +1417,11 @@ Proof.
       unfold link_shdw_dest, link_shdw in RRs. rewrite RRs.
       destruct (dest (link_shdw' _ _ _ f' _)) eqn:EQf'. rewrite RRv.
       all: destruct (dest (link_vl _ _ _ _)); auto; rewrite RRs, EQf'; auto. }
-    { specialize (LINK_LINK t' Σ0 (nv_bd x' a σ')).
-      simpl in *. rewrite RRv in LINK_LINK.
-      erewrite LINK_LINK; eauto.
+    { erewrite LINK_LINK; eauto. simpl.
+      rewrite RRv.
       destruct (dest (link_vl _ _ _ _)); auto.
-      rewrite RRσ. symmetry.
-      cbv [link_nv_dest link_nv] in *. rewrite RRσ.
-      destruct (dest (link_nv' _ _ σ' Ret_env)) as [v'|]; auto.
+      rewrite RRσ. cbv [link_nv_dest link_nv] in *|-. rewrite RRσ.
+      unfold link_nv. destruct (dest (link_nv' _ _ σ' Ret_env)) as [v'|]; auto.
       destruct v'; auto. }
   - specialize (RRσ σ0 K Σ0).
     rewrite <- CONT in RRσ.
@@ -1428,8 +1465,7 @@ Proof.
     intros σ''; simpl.
     rewrite RRσ. symmetry. rewrite RRσ. simpl.
     destruct (dest (link_nv _ _ σ'' _)); auto.
-    destruct v; auto.
-    erewrite IHt; eauto.
+    destruct v; symmetry; auto.
 Qed.
 
 Lemma link_link n :
@@ -1440,12 +1476,13 @@ Proof.
   induction n; unfold link_trace_link.
   { intros. destruct t; simpl. destruct (RR 0) as (_ & RRσ & _).
     rewrite RRσ; auto. }
-  intros. destruct t as [? k']; simpl.
+  intros. destruct t as [? t]; simpl.
   destruct (RR (S n)) as (_ & RRσ & _).
   rewrite RRσ; simpl. destruct (dest (link_nv _ _ _ _)) eqn:EQσ; auto.
-  destruct v; auto.
+  destruct v as [|x t' σ]; auto.
+  rewrite unfold_link_traceF.
   pose proof (pre_link_link _ (link_dest n) IHn) as (_ & _ & _ & RRt).
-  specialize (RRt (k' (S n)) Σ0).
+  specialize (RRt (t n) Σ0 σ0 k K).
 Abort.
 
 Lemma ev_monotonicity : ∀ e k k' σ v f f'
