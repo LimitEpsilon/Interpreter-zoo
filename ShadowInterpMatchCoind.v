@@ -417,6 +417,76 @@ Module StreamTest.
   Qed.
 End StreamTest.
 
+Module MultiRel. Section CompleteLattice.
+  Context {A B : Type}.
+  Notation "x ⊑ y" :=
+    (∀ a b b' (LE_CONT : b <1= b') (LESS : x a b), y a b')
+    (at level 60)
+  .
+
+  Definition up_clos (t : A → (B → Prop) → Prop) := t ⊑ t.
+
+  (* multirelation with up-closure forms a complete lattice *)
+  Let T := { t & up_clos t }.
+
+  Definition le_T (t t' : T) := projT1 t ⊑ projT1 t'.
+
+  Lemma le_T_refl t : le_T t t.
+  Proof. destruct t. cbv. assumption. Qed.
+
+  Lemma le_T_trans t t' t'' : le_T t t' → le_T t' t'' → le_T t t''.
+  Proof. destruct t, t', t''; cbv; eauto. Qed.
+
+  (* if we have proof irrelevance and propext, this is assymetricity *)
+  Lemma le_T_assym t t' : le_T t t' → le_T t' t →
+    ∀ a b, projT1 t a b ↔ projT1 t' a b.
+  Proof. destruct t, t'; cbv; eauto. Qed.
+
+  (* greatest fixed point, or the least upper bound *)
+  Definition lub (P : T → Prop) (a : A) (b : B → Prop) : Prop :=
+    ∃ t b', P t ∧ projT1 t a b' ∧ b' <1= b
+  .
+
+  Lemma lub_up_clos P : up_clos (lub P).
+  Proof.
+    repeat intro.
+    destruct LESS as ([? ?] & ? & ? & ? & ?).
+    simpl in *.
+    do 2 eexists. eauto.
+  Qed.
+
+  Lemma lub_ub P t (INP : P t) : le_T t (existT _ (lub P) (lub_up_clos P)).
+  Proof. unfold le_T. simpl. unfold lub. eauto. Qed.
+
+  Lemma lub_least P t (UB : ∀ t' (INP : P t'), le_T t' t) :
+    le_T (existT _ (lub P) (lub_up_clos P)) t.
+  Proof.
+    cbv [le_T] in *. destruct t. simpl in *.
+    unfold lub. intros ? ? ? ? (? & ? & ? & ? & ?).
+    eauto.
+  Qed.
+
+  (* least fixed point, or the greatest lower bound *)
+  Definition glb (P : T → Prop) (a : A) (b : B → Prop) : Prop :=
+    ∀ t b', P t → b <1= b' → projT1 t a b'
+  .
+
+  Lemma glb_up_clos P : up_clos (glb P).
+  Proof. cbv [up_clos glb] in *. auto. Qed.
+
+  Lemma glb_lb P t (INP : P t) : le_T (existT _ (glb P) (glb_up_clos P)) t.
+  Proof. unfold le_T. simpl. unfold glb. eauto. Qed.
+
+  Lemma glb_greatest P t (LB : ∀ t' (INP : P t'), le_T t t') :
+    le_T t (existT _ (glb P) (glb_up_clos P)).
+  Proof.
+    cbv [le_T] in *. simpl.
+    unfold glb. intros.
+    eapply LB; eauto.
+    destruct t; simpl in *. eauto.
+  Qed.
+End CompleteLattice. End MultiRel.
+
 Definition var := string.
 
 Inductive shdw {vl} :=
@@ -531,6 +601,7 @@ Definition fst' := Lam "x" (Lam "y" (Var "x")).
 
 (* Finite approximation, annotated with source term *)
 Inductive trace := Tr (e : term) (k : nat → traceF trace).
+CoInductive Trace := mkTrace { obs_tr : term * traceF Trace }.
 
 Section trace_ind.
   Let Value := vl trace.
@@ -786,9 +857,10 @@ Proof.
   eauto.
 Qed.
 
+(* maybe we can define a coinductive relational style definition in paco and prove the equivalence *)
 Section link.
   Context {trace : Type}.
-  Context (link_trace : env trace → trace → (vl trace → traceF trace) → traceF trace).
+  Context (link_trace : env trace → trace → (vl trace → traceF trace → Prop) → traceF trace → Prop).
 
   Definition rd x :=
     fix rd (σ : env trace) :=
@@ -836,7 +908,7 @@ Section link.
       end.
 
   Definition link_nv' link_value (σ0 : env trace) :=
-    fix link (σ : env trace) k : traceF trace :=
+    fix link (σ : env trace) k : traceF trace → Prop :=
       match σ with
       | Init => k σ0
       | nv_bd x v σ' =>
@@ -858,54 +930,83 @@ Section link.
   Definition link_shdw σ0 := link_shdw' (link_vl σ0) σ0.
   Definition link_nv σ0 := link_nv' (link_vl σ0) σ0.
 
-  Definition link_tr σ0 :=
-    fix link (t : traceF trace) k :=
+  Definition link_tr σ0 k :=
+    fix link (t : traceF trace) :=
       match t with
-      | Stuck => Stuck
+      | Stuck => fun t_k => t_k = Stuck
       | Ret v => link_vl σ0 v k
       | Step σ t' =>
-        let k_σ σ' := Step σ' (link t' k) in
+        let k_σ σ' t_k := ∃ t'', link t' t'' ∧ t_k = Step σ' t'' in
         link_nv σ0 σ k_σ
       end.
 End link.
 
-Fixpoint link_traceF n :=
-  link_tr (fun σ0 '(Tr _ t') k => Step σ0
-    match n with
-    | 0 => Stuck
-    | S n' => link_traceF n' σ0 (t' n') k
-    end).
+(* σ0 ⋊ t ; k ⊆ ℘(Trace) *)
+(* k : Val → ℘(Trace) *)
+Definition linkF link σ0 t k :=
+  link_tr (fun σ0 t => link σ0 (snd (obs_tr t))) σ0 k t
+.
 
-Definition link_trace n σ0 '(Tr _ t') k := Step σ0
-  match n with
-  | 0 => Stuck
-  | S n' => link_traceF n' σ0 (t' n') k
-  end.
+Notation "a ⊑ b" :=
+  (∀ t σ0 k k' t' (LE : k <2= k') (LESS : a σ0 t k t'), b σ0 t k' t')
+  (at level 60)
+.
 
-Lemma unfold_link_traceF n :
-  link_traceF n = link_tr (link_trace n).
-Proof. destruct n; reflexivity. Qed.
+Lemma link_monotone {T} link link' (LINK_LE : link ⊑ link') :
+  (∀ s, ∀ σ0 k k' (LE : k <2= k') t',
+    link_shdw link σ0 s k t' → link_shdw link' σ0 s k' t') ∧
+  (∀ σ, ∀ σ0 k k' (LE : k <2= k') t',
+    link_nv link σ0 σ k t' → link_nv link' σ0 σ k' t') ∧
+  (∀ v, ∀ σ0 k k' (LE : k <2= k') t',
+    link_vl link σ0 v k t' → link_vl link' σ0 v k' t') ∧
+  (∀ t, ∀ σ0 k k' (LE : k <2= k') t',
+    link_tr link σ0 k t t' → link_tr (trace := T) link' σ0 k' t t').
+Proof.
+  apply (pre_val_ind _ (fun _ => I)); simpl; intuition auto.
+  - eapply IHs; eauto. simpl. intros f ? ?.
+    eapply IHv; eauto. simpl. intros.
+    cbv [ap] in *. destruct f; eauto.
+  - eapply IHv; eauto. simpl. intros.
+    eapply IHσ; eauto. simpl. eauto.
+  - eapply IHσ; eauto. simpl. eauto.
+  - eapply IHσ; eauto. simpl. intros ? ? (? & ? & ?); subst. eauto.
+Qed.
 
-Definition link_value n := link_vl (link_trace n).
+Lemma linkF_monotone link link' (LE : link ⊑ link') : linkF link ⊑ linkF link'.
+Proof. cbv [linkF]. intros. eapply link_monotone; eauto. eauto. Qed.
 
-Definition link_env n := link_nv (link_trace n).
+Lemma linkF_up_clos link (CLOS : link ⊑ link) : linkF link ⊑ linkF link.
+Proof. apply linkF_monotone; auto. Qed.
 
-Definition link_shadow n := link_shdw (link_trace n).
+Variant link σ0 t k t_k : Prop :=
+| link_intro link' k'
+  (UP_CLOS : link' ⊑ link')
+  (POSTFIX : link' ⊑ linkF link')
+  (LINK : link' σ0 t k' t_k)
+  (LEk : k <2= k')
+.
 
-Fixpoint denote (t : term) k {struct t} : nat → traceF trace :=
+Definition link_trace σ0 t k t' :=
+  ∃ t'', link σ0 (snd (obs_tr t)) k t'' ∧ t' = Step σ0 t''
+.
+
+Definition link_value := link_vl link_trace.
+
+Definition link_env := link_nv link_trace.
+
+Definition link_shadow := link_shdw link_trace.
+
+Fixpoint denote (t : term) k {struct t} : traceF Trace → Prop :=
   match t with
-  | Var x =>
-    let r := vl_sh (Rd x) in
-    fun _ => k r
-  | Lam x e =>
-    let E := Tr e (denote e Ret) in
-    let r := vl_clos x E Init in
-    fun _ => k r
-  | App fn arg => fun n =>
+  | Var x => k (vl_sh (Rd x))
+  | Lam x e => fun t_k => ∃ t',
+    denote e (fun v t_f => t_f = Ret v) t' ∧
+    k (vl_clos x (mkTrace (e, t')) Init) t_k
+  | App fn arg =>
     let k_fn f :=
-      let k_arg a := ap (link_trace n) f a k in
-      denote arg k_arg n in
-    denote fn k_fn n
+      let k_arg a := ap link_trace f a k in
+      denote arg k_arg in
+    denote fn k_fn
   end.
 
 Definition wf_trace t :=
@@ -916,7 +1017,6 @@ Definition wf_trace t :=
 Definition bind k :=
   fix bind_ (t : traceF trace) :=
     match t with
-    | Stuck => Stuck
     | Ret v => k v
     | Step σ t' => Step σ (bind_ t')
     end.
@@ -926,7 +1026,6 @@ Lemma bind_ext k k' (EXT : ∀ v, k v = k' v) :
 Proof.
   refine (fix go t :=
     match t with
-    | Stuck => eq_refl
     | Ret v => EXT v
     | Step σ t' => f_equal (Step σ) (go t')
     end).

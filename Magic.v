@@ -47,4 +47,5 @@ Proof.
     end
   end).
 Fail Qed.
+Abort.
 
