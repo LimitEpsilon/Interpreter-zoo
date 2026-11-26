@@ -16,3 +16,8 @@ A CPS transformer and evaluator of a functional language featuring `raise` and `
 - With recursion, add Peano naturals, remember constraints, use destructor ([ShadowInterpMatchEager.v](ShadowInterpMatchEager.v))
 - With recursion, add general constructors, remember constraints ([ShadowInterpMatchGuard.v](ShadowInterpMatchGuard.v))
 
+## Denotational semantics with adequacy ([denot/](denot/))
+
+A computable denotational semantics (no coinductive types) for the module
+language with constructors and matches, and a proof that it agrees with a
+standard interpreter. See [denot/README.md](denot/README.md).
