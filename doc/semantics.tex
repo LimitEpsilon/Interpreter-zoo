@@ -1,89 +1,808 @@
-\section{Denotational Semantics for Untyped $\lambda$-Calculus}
+\section{A Denotational Semantics for a Module Language}
+
+This document defines a denotational semantics for a call-by-value language with first-class modules and recursive bindings.
+It proves that the semantics agrees with an interpreter.
+The semantics is computable, and it uses no coinductive type.
+The directory \rocq{denot/} holds the definitions and the proofs in Rocq.
+Table~\ref{tab:rocq} gives the Rocq name of each statement.
+
+The terms of this document are the terms of \rocq{denot/glossary.md}.
+The proofs use the structured style of L.~Lamport, \emph{How to Write a Proof}.
+
+\subsection{The Language}
+
+\begin{figure}[h]
+  \small
+  \centering
+  \begin{tabular}{rrcll}
+    Variable    & $x$ & $\in$ & $\Var$                                           &                  \\
+    Constructor & $C$ & $\in$ & $\Cstr$                                          &                  \\
+    Term        & $e$ & $\in$ & $\Expr\Coloneqq x$ $\vbar$ $\lambda x.e$ $\vbar$ $e\:e$ & variable, function, application \\
+                &     &       & $\vbar$ $e\synlink e$ $\vbar$ $\varepsilon$ $\vbar$ $\synbind{x}{e}{e}$ & link term, empty module, binding \\
+                &     &       & $\vbar$ $C\:\overline{e}$ $\vbar$ $\texttt{match}\:e\:\{\overline{C\:\overline{x}\rightarrow e}\}$ & constructor, match
+  \end{tabular}
+  \caption{Terms.}
+  \label{fig:syntax}
+\end{figure}
+
+A module is a value that holds an environment.
+The link term $e_1\synlink e_2$ evaluates $e_2$ in the environment of the module of $e_1$.
+The binding $\synbind{x}{e_1}{e_2}$ binds $x$ in $e_2$ and in $e_1$.
+It gives the module of $e_2$ with $x$ in front.
+Thus a binding defines a recursive function, a recursive functor, or mutually recursive modules.
 
 \subsection{Semantic Domains}
+
 \begin{figure}[h]
   \small
-  \begin{tabular}{rrcll}
-    Program variable    & $x$      & $\in$ & $\textsf{Var}$                                                          \\
-    Expression          & $e$      & $\in$ & $\Expr\Coloneqq x$ $\vbar$ $\lambda x.e$ $\vbar$ $e$ $e$                \\
-    Shadow              & $S$      & $\in$ & $\Event\Coloneqq\textsf{Rd}(x)$ $\vbar$ $\textsf{Ap}(S,v)$              \\
-    Environment         & $\sigma$ & $\in$ & $\Ctx\Coloneqq\textsf{Init}$ $\vbar$ $(x,v)\cons\sigma$                 \\
-    Value               & $v$      & $\in$ & $\Value\Coloneqq S$ $\vbar$ $\langle x,t,\sigma \rangle$                \\
-    Trace (Coinductive) & $t$      & $\in$ & $\textsf{Trace}\Coloneqq\bot$ $\vbar$ $\sigma\rightarrow t$ $\vbar$ $v$ \\
+  \centering
+  \begin{tabular}{rrcl}
+    Anchor      & $a$      & $\in$ & $\Anchor\Coloneqq\bidx{i}$ $\vbar$ $\ell$                                              \\
+    Shadow      & $S$      & $\in$ & $\Event\Coloneqq\InitE$ $\vbar$ $\ReadE(S,x)$ $\vbar$ $\CallE(S,v)$ $\vbar$ $\FldE(S,C,i)$ \\
+    Environment & $\sigma$ & $\in$ & $\Ctx\Coloneqq\bullet$ $\vbar$ $[S]$ $\vbar$ $(x,v)\cons\sigma$ $\vbar$ $(x,\muval{v})\cons\sigma$ $\vbar$ $(x,a)\cons\sigma$ \\
+    Value       & $v$      & $\in$ & $\Value\Coloneqq\sigma$ $\vbar$ $S$ $\vbar$ $\langle\lambda x.b,\sigma\rangle$ $\vbar$ $C\:\overline{v}$ \\
+    Body        & $b$      & $\in$ & $\Body\triangleq\mathbb{N}\rightarrow\Trace$                                            \\
+    Trace       & $t$      & $\in$ & $\Trace\Coloneqq\bot$ $\vbar$ $v$ $\vbar$ $\guardt{v}{t}$ $\vbar$ $\MatchT\:S\:\{\overline{C/n\Mapsto t}\}$
   \end{tabular}
+  \caption{Semantic domains. Each domain is inductive.}
+  \label{fig:domains}
 \end{figure}
+
+An anchor is an index $\bidx{i}$ or a name $\ell$.
+A value is a module, a shadow, a closure or a constructor value.
+A trace is $\bot$, a leaf, a guard or a branch node.
+
+A shadow is a computation that waits for the unknown environment $\InitE$.
+The shadow $\ReadE(S,x)$ reads the variable $x$ of the module $S$.
+The shadow $\CallE(S,v)$ applies the function $S$ to $v$.
+The shadow $\FldE(S,C,i)$ is field $i$ of $S$, when $S$ is a constructor value of $C$.
+The environment $[S]$ is a module that is a shadow.
+
+A closure holds a body, not a term.
+A body is one trace for each fuel.
+A trace is a finite tree, and $\bot$ gives no information.
+The guard $\guardt{v}{t}$ says that linking must resolve $v$ before $t$ counts.
+A branch node has one trace for each branch of a match on the shadow $S$.
+The spine of a trace is its guards and its scrutinees, without its leaves.
+
+An entry of an environment binds a variable to a value, to a recursive value $\muval{v}$, or to an anchor.
+An anchor is the placeholder for the value of a binding while the right side of the binding runs.
+Anchors are locally nameless.
+A recursive value around an index binds the index, and a name is free.
+The index $\bidx{0}$ in $v$ is the anchor of the recursive value $\muval{v}$.
+The name $\dead$ is the dead anchor.
+
+\subsection{Operations on Anchors}
+
+The operations of this section are structural recursions on values.
+They do not change the body of a closure.
+
+\begin{itemize}
+  \item Open: $\openloc{\ell}{v}$ is $v$ with the index $\bidx{0}$ made the name $\ell$.
+  \item Close: $\closeloc{\ell}{v}$ is $v$ with the name $\ell$ made the index $\bidx{0}$.
+  \item Rename: $\xi(v)$ is $v$ with each name $\ell$ made $\xi(\ell)$, for a function $\xi$ on names.
+  \item Replace: $\repl{v}{u}{\ell}$ is $v$ with each entry $(x,\ell)$ made $(x,\muval{u})$.
+  \item Unroll: $\unroll(\muval{v})$ is $v$ with each entry $(x,\bidx{0})$ made $(x,\muval{v})$.
+\end{itemize}
+
+A name is fresh for a value when no entry of the value holds it.
+$\fresh(\sigma,v)$ is a name that is fresh for $\sigma$ and for $v$, and that is not $\dead$.
+A value is locally closed when a recursive value around each index binds the index.
+A value is well formed when it is locally closed and each body of a closure is the denotation of a term.
+
+The read of a variable in an environment is a partial function:
+\begin{alignat*}{2}
+  [S](x)                         & \triangleq\ReadE(S,x)          &                                \\
+  ((x,v)\cons\sigma)(x)          & \triangleq v                   &                                \\
+  ((x,\muval{v})\cons\sigma)(x)  & \triangleq\unroll(\muval{v})   &                                \\
+  ((y,\cdot)\cons\sigma)(x)      & \triangleq\sigma(x)            & \qquad\text{when }y\neq x
+\end{alignat*}
+The read of a variable that is bound to an anchor is not defined.
+The read of a variable in $\bullet$ is not defined.
+
+\subsection{Traces}
+
+The trace $t\bindt k$ is $t$ with the trace $k(v)$ in the place of each leaf $v$.
+A trace is finished when it has only guards and then one leaf.
+$\result(t)$ is the value of that leaf, and $\cost(t)$ is the number of the guards.
+The trace $t'$ extends $t$, written $t\ext t'$, when $t'$ is $t$ with a trace in the place of some $\bot$.
+$\killf{\ell}(t)$ is $t$ with the name $\ell$ made $\dead$ in each value of the spine.
+The leaves of $\killf{\ell}(t)$ are the leaves of $t$.
+
+A statement about a fuel $m$ holds \emph{from some fuel} when a fuel $m_0$ exists such that the statement holds for each $m\ge m_0$.
 
 \subsection{Linking}
-Linking is defined by mixed induction-coinduction.
-$\sigma_0\semlink t\fatsemi k$ appeals to $t$ coinductively, while for other domains the arguments are recursed upon inductively.
 
-\begin{alignat*}{3}
-  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Event\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
-  \sigma_0\semlink{} &  & \textsf{Rd}(x)             &  & {}\fatsemi k\triangleq{} & \textsf{rd}(\sigma_0,x;k)                                                                                \\
-  \sigma_0\semlink{} &  & \textsf{Ap}(S,v)           &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink S\fatsemi\lambda f.\sigma_0\semlink v\fatsemi\lambda a.\textsf{ap}(f,a;k)               \\
-  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Ctx\rightarrow(\Ctx\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
-  \sigma_0\semlink{} &  & \textsf{Init}              &  & {}\fatsemi k\triangleq{} & k(\sigma_0)                                                                                              \\
-  \sigma_0\semlink{} &  & (x,v)\cons\sigma           &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink v\fatsemi\lambda v'.\sigma_0\semlink\sigma\fatsemi\lambda \sigma'.k((x,v')\cons\sigma') \\
-  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\Value\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
-  \sigma_0\semlink{} &  & \langle x,t,\sigma \rangle &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink\sigma\fatsemi\lambda \sigma'.k(\langle x,t,\sigma'\rangle)                              \\
-  \intertext{\hfill\fbox{$\cdot\semlink\cdot\fatsemi\cdot\in\Ctx\rightarrow\textsf{Trace}\rightarrow(\Value\to\textsf{Trace})\rightarrow\textsf{Trace}$}}
-  \sigma_0\semlink{} &  & \bot                       &  & {}\fatsemi k\triangleq{} & \bot                                                                                                     \\
-  \sigma_0\semlink{} &  & \sigma\rightarrow t        &  & {}\fatsemi k\triangleq{} & \sigma_0\semlink\sigma\fatsemi\lambda\sigma'.\sigma'\rightarrow \sigma_0\semlink t\fatsemi k
-\end{alignat*}
+Linking puts an environment $\sigma_0$ in the place of the unknown environment, and runs each shadow.
+$\sigma_0\lk{n}X$ links $\sigma_0$ into a shadow, an environment, a value or a trace $X$ at the fuel $n$.
+$\sigma_0\splk{n}t$ links $\sigma_0$ into the spine of $t$.
+$\runb{n}(\sigma,b)$ links $\sigma$ into the body $b$, and $\lnkv{n}(\sigma_0,v)$ links $\sigma_0$ into the value $v$ of a recursive value.
+The fuel bounds the depth of the calls and of the recursive values.
 
-$\textsf{rd}(\sigma,x;k)$ and $\textsf{ap}(f,a;k)$ are defined by
-\[
-  \textsf{rd}(\sigma,x;k)\triangleq
-  \begin{cases}
-    \bot & \text{when }\sigma(x)=\bot \\
-    k(v) & \text{when }\sigma(x)=v
-  \end{cases}
-\]
-\[
-  \textsf{ap}(f,a;k)\triangleq
-  \begin{cases}
-    (x,a)\cons\sigma\semlink t\fatsemi k & \text{when }f=\langle x,t,\sigma \rangle \\
-    k(\textsf{Ap}(S,a))                  & \text{when }f=S
-  \end{cases}
-\]
-
-\subsection{Denotational Semantics}
-Denotational semantics is defined by
 \begin{alignat*}{2}
-  \intertext{\hfill\fbox{$\sembracket{e}\in(\Value\to\textsf{Trace})\to\textsf{Trace}$}}
-  \sembracket{x}k           & \triangleq\textsf{Init}\rightarrow k(\textsf{Rd}(x))                                                     \\
-  \sembracket{\lambda x.e}k & \triangleq\textsf{Init}\rightarrow k(\langle x,\sembracket{e}\textsf{Ret},\textsf{Init}\rangle)          \\
-  \sembracket{e_1\:e_2}k    & \triangleq\textsf{Init}\rightarrow\sembracket{e_1}\lambda f.\sembracket{e_2}\lambda a.\textsf{ap}(f,a;k)
+  \runb{0}(\sigma,b)       & \triangleq\bot   & \qquad \runb{n+1}(\sigma,b)     & \triangleq\sigma\lk{n}b(n)  \\
+  \lnkv{0}(\sigma_0,v)     & \triangleq\bot   & \qquad \lnkv{n+1}(\sigma_0,v)   & \triangleq\sigma_0\lk{n}v   \\
+  \callt{n}(\sigma,b)      & \triangleq\guardt{\sigma}{\runb{n}(\sigma,b)}
 \end{alignat*}
 
-Why do we need the $\textsf{Init}\rightarrow$ prefix?
+\begin{alignat*}{2}
+  \sigma_0\lk{n}{} & \InitE                              &  & \triangleq\sigma_0                                                                                          \\
+  \sigma_0\lk{n}{} & \ReadE(S,x)                         &  & \triangleq(\sigma_0\lk{n}S)\bindt\rdf{x}                                                                     \\
+  \sigma_0\lk{n}{} & \CallE(S,v)                         &  & \triangleq(\sigma_0\lk{n}S)\bindt\lambda f.(\sigma_0\lk{n}v)\bindt\lambda a.\apf{n}(f,a)                     \\
+  \sigma_0\lk{n}{} & \FldE(S,C,i)                        &  & \triangleq(\sigma_0\lk{n}S)\bindt\fldf{C}{i}                                                                 \\
+  \sigma_0\lk{n}{} & \bullet                             &  & \triangleq\bullet                                                                                            \\
+  \sigma_0\lk{n}{} & [S]                                 &  & \triangleq(\sigma_0\lk{n}S)\bindt\modf                                                                       \\
+  \sigma_0\lk{n}{} & (x,v)\cons\sigma                    &  & \triangleq(\sigma_0\lk{n}v)\bindt\lambda v'.(\sigma_0\lk{n}\sigma)\bindt\lambda\sigma'.(x,v')\cons\sigma'    \\
+  \sigma_0\lk{n}{} & (x,\muval{v})\cons\sigma            &  & \triangleq\killf{\ell}(\lnkv{n}(\sigma_0,\openloc{\ell}{v}))\bindt\lambda v'.                              \\
+                   &                                     &  & \qquad(\sigma_0\lk{n}\sigma)\bindt\lambda\sigma'.(x,\muval{\closeloc{\ell}{v'}})\cons\sigma'
+                   \qquad\text{where }\ell=\fresh(\sigma_0,v)                                                                    \\
+  \sigma_0\lk{n}{} & (x,a)\cons\sigma                    &  & \triangleq(\sigma_0\lk{n}\sigma)\bindt\lambda\sigma'.(x,a)\cons\sigma'                                        \\
+  \sigma_0\lk{n}{} & \langle\lambda x.b,\sigma\rangle    &  & \triangleq(\sigma_0\lk{n}\sigma)\bindt\lambda\sigma'.\langle\lambda x.b,\sigma'\rangle                        \\
+  \sigma_0\lk{n}{} & C\:v_1\dots v_k                     &  & \triangleq(\sigma_0\lk{n}v_1)\bindt\lambda v_1'.\cdots(\sigma_0\lk{n}v_k)\bindt\lambda v_k'.C\:v_1'\dots v_k'
+\end{alignat*}
 
-\[(\lambda\omega.(\lambda x.\lambda y.y)(\omega\:\omega))(\lambda x.x\:x)\]
+The continuations read a variable, apply a function, take a field and take a module.
+In each case that the equations do not give, the trace is $\bot$.
+\begin{alignat*}{2}
+  \rdf{x}(\sigma)                               & \triangleq\guardt{\sigma}{\sigma(x)}                 & \qquad \rdf{x}(S)       & \triangleq\ReadE(S,x)   \\
+  \apf{n}(\langle\lambda x.b,\sigma\rangle,a)   & \triangleq\callt{n}((x,a)\cons\sigma,b)              & \qquad \apf{n}(S,a)     & \triangleq\CallE(S,a)   \\
+  \fldf{C}{i}(C\:\overline{v})                  & \triangleq\guardt{C\:\overline{v}}{v_i}              & \qquad \fldf{C}{i}(S)   & \triangleq\FldE(S,C,i)  \\
+  \modf(\sigma)                                 & \triangleq\sigma                                     & \qquad \modf(S)         & \triangleq[S]
+\end{alignat*}
 
-Preserve non-termination in call-by-value semantics
+Linking into a trace links into the spine, and then into the leaf.
+\begin{alignat*}{2}
+  \sigma_0\splk{n}{} & \bot                               &  & \triangleq\bot                                                                           \\
+  \sigma_0\splk{n}{} & v                                  &  & \triangleq v                                                                             \\
+  \sigma_0\splk{n}{} & (\guardt{u}{t})                    &  & \triangleq(\sigma_0\lk{n}u)\bindt\lambda u'.\guardt{u'}{(\sigma_0\splk{n}t)}              \\
+  \sigma_0\splk{n}{} & \MatchT\:S\:\{\overline{C/k\Mapsto t}\} &  & \triangleq(\sigma_0\lk{n}S)\bindt\mathit{sel}                                          \\
+                     &                                    &  & \qquad\text{where }\mathit{sel}(S')=\MatchT\:S'\:\{\overline{C/k\Mapsto\sigma_0\splk{n}t}\} \\
+                     &                                    &  & \qquad\text{and }\mathit{sel}(C_j\:\overline{v})=\guardt{C_j\:\overline{v}}{(\sigma_0\splk{n}t_j)}\text{ when }|\overline{v}|=k_j \\
+  \sigma_0\lk{n}{}   & t                                  &  & \triangleq(\sigma_0\splk{n}t)\bindt\lambda v.\sigma_0\lk{n}v
+\end{alignat*}
 
-\subsection{Proving Equivalence with Standard Semantics}
+\paragraph{Guards.}
+When linking uses only a part of a resolved value, it keeps the whole value in a guard.
+The cases are the read of a module, the field of a constructor value, the branch of a match and the environment of a body.
+A later linking must then resolve each value that a call-by-value run computes.
 
-\begin{figure}[h]
+\paragraph{Recursive values.}
+To link into a recursive value, linking opens it with a fresh anchor, links, and closes it.
+The anchor then leaves its scope.
+So linking kills the anchor in the spine.
+The opened value is not a structural part of the recursive value.
+Thus this case uses the fuel, through $\lnkv{n}$.
+
+\subsection{The Denotation}
+
+The denotation $\sembracket{e}$ of a term is a body.
+$\den{e}{n}$ is its trace at the fuel $n$.
+It is a structural recursion on $e$, and it takes no environment.
+\begin{alignat*}{2}
+  \den{x}{n}                      & \triangleq\ReadE(\InitE,x)                                                                                    \\
+  \den{\lambda x.e}{n}            & \triangleq\langle\lambda x.\sembracket{e},[\InitE]\rangle                                                      \\
+  \den{e_1\:e_2}{n}               & \triangleq\den{e_1}{n}\bindt\lambda f.\den{e_2}{n}\bindt\lambda a.\apf{n}(f,a)                                 \\
+  \den{e_1\synlink e_2}{n}        & \triangleq\den{e_1}{n}\bindt\lambda m.\callt{n}(\modf(m),\sembracket{e_2})                                     \\
+  \den{\varepsilon}{n}            & \triangleq\bullet                                                                                             \\
+  \den{\synbind{x}{e_1}{e_2}}{n}  & \triangleq\killf{1}(\callt{n}((x,1)\cons[\InitE],\sembracket{e_1}))\bindt\lambda v.                              \\
+                                  & \qquad\callt{n}((x,\muval{\closeloc{1}{v}})\cons[\InitE],\sembracket{e_2})\bindt\lambda m.(x,\muval{\closeloc{1}{v}})\cons\modf(m) \\
+  \den{C\:e_1\dots e_k}{n}        & \triangleq\den{e_1}{n}\bindt\lambda v_1.\cdots\den{e_k}{n}\bindt\lambda v_k.C\:v_1\dots v_k                   \\
+  \den{\texttt{match}\:e\:\{\overline{C\:\overline{x}\rightarrow e'}\}}{n} & \triangleq\den{e}{n}\bindt\mathit{sel}                         \\
+                                  & \qquad\text{where }\mathit{sel}(C_j\:\overline{v})=\callt{n}((\overline{x_j},\overline{v})\cons[\InitE],\sembracket{e_j'})\text{ when }|\overline{v}|=|\overline{x_j}| \\
+                                  & \qquad\text{and }\mathit{sel}(S)=\MatchT\:S\:\{\overline{C/|\overline{x}|\Mapsto\callt{n}((\overline{x},\overline{\FldE(S,C,i)})\cons[\InitE],\sembracket{e'})}\}
+\end{alignat*}
+A match on a constructor value takes the first branch with the name and the number of fields of the value.
+The result of a term $e$ in an environment $\sigma$ at the fuel $n$ is $\result(\runb{n}(\sigma,\sembracket{e}))$.
+
+The denotation of a binding links $(x,1)\cons[\InitE]$ into the denotation of $e_1$.
+It closes the anchor $1$ in the result, which gives the recursive value of $x$.
+Then it continues with $e_2$.
+
+\subsection{The Reference Interpreter}
+
+The reference interpreter has environments and fuel.
+It has no shadows, no traces and no linking, and a closure holds a term.
+\begin{center}
   \small
-  \begin{tabular}{rrcll}
-    Environment & $\underline{\sigma}$ & $\in$ & $\underline{\Ctx}\triangleq\fin{\textsf{Var}}{\underline{\Value}}$          \\
-    Value       & $\underline{v}$      & $\in$ & $\underline{\Value}\triangleq\textsf{Var}\times\Expr\times\underline{\Ctx}$
+  \begin{tabular}{rrcl}
+    Environment & $\rho$ & $\Coloneqq$ & $\bullet$ $\vbar$ $(x,u)\cons\rho$ $\vbar$ $(x,\muval{u})\cons\rho$ $\vbar$ $(x,a)\cons\rho$ \\
+    Value       & $u$    & $\Coloneqq$ & $\rho$ $\vbar$ $\langle\lambda x.e,\rho\rangle$ $\vbar$ $C\:\overline{u}$
   \end{tabular}
-\end{figure}
-
-We can "lower" a shadow-free environment/value/trace into a function from some initial environment $\underline{\sigma_0}\in\underline{\Ctx}$
-to its output environment/value/value.
-For example,
+\end{center}
+$\evalf{N}(e,\rho)$ is the value of $e$ in $\rho$ at the fuel $N$.
+It is a partial function, and $\evalf{0}$ is not defined.
 \begin{alignat*}{2}
-  \intertext{\hfill\fbox{$\downarrow\sigma\in\underline{\Ctx}\rightharpoonup\underline{\Ctx}$}}
-  \downarrow\textsf{Init}    & \triangleq\lambda\underline{\sigma_0}.\underline{\sigma_0} \\
-  \downarrow(x,v)\cons\sigma & \triangleq(\downarrow\sigma)[x\mapsto\downarrow v]
+  \evalf{N+1}(x,\rho)                    & \triangleq\rho(x)                                                                                                   \\
+  \evalf{N+1}(\lambda x.e,\rho)          & \triangleq\langle\lambda x.e,\rho\rangle                                                                            \\
+  \evalf{N+1}(e_1\:e_2,\rho)             & \triangleq\evalf{N}(e,(x,u_2)\cons\rho_1)                                                                            \\
+                                         & \qquad\text{where }\evalf{N}(e_1,\rho)=\langle\lambda x.e,\rho_1\rangle\text{ and }\evalf{N}(e_2,\rho)=u_2            \\
+  \evalf{N+1}(e_1\synlink e_2,\rho)      & \triangleq\evalf{N}(e_2,\rho_1)\qquad\text{where }\evalf{N}(e_1,\rho)=\rho_1                                         \\
+  \evalf{N+1}(\varepsilon,\rho)          & \triangleq\bullet                                                                                                   \\
+  \evalf{N+1}(\synbind{x}{e_1}{e_2},\rho) & \triangleq(x,\muval{\closeloc{\ell}{u_1}})\cons\rho_2                                                               \\
+                                         & \qquad\text{where }\ell=\fresh(\rho),\ \evalf{N}(e_1,(x,\ell)\cons\rho)=u_1                                           \\
+                                         & \qquad\text{and }\evalf{N}(e_2,(x,\muval{\closeloc{\ell}{u_1}})\cons\rho)=\rho_2
 \end{alignat*}
+A constructor evaluates its arguments from left to right.
+A match evaluates its scrutinee, and then the first branch with the name and the number of fields of the value.
+The read $\rho(x)$ unrolls a recursive value, as in Section~\ref{sec:anchors}.
+$\fresh(\rho)$ is a name that is fresh for $\rho$ and that is not $\dead$.
 
-Note that the function is a partial function; it might return bottom if some intermediate output is bottom.
-Such a case might occur when either there is an infinite computation or an unresolved computation (a shadow).
+The lift $\lift{u}$ of a value of the interpreter is $u$ with $\sembracket{e}$ in the place of the term $e$ of each closure.
+An environment $\rho$ is locally closed when $\lift{\rho}$ is locally closed.
 
-We want to prove that $\underline{\sigma}\vdash e\Downarrow \underline{v}$ if and only if
-there exists a $\sigma$ such that $(\downarrow\sigma)[]=\underline{\sigma}$ and
-$(\downarrow(\sigma\semlink\sembracket{e}\textsf{Ret}\fatsemi\textsf{Ret}))[]=\underline{v}$.
+\subsection{Results}
+
+Each value and each environment of this section is well formed, and each body is the denotation of a term.
+Linking and the denotation give only well-formed values (\rocq{Wf.v}).
+
+\begin{table}[h]
+  \small
+  \centering
+  \begin{tabular}{ll}
+    Statement                                         & Rocq                                                                      \\
+    \hline
+    Lemma~\ref{lem:fuel} (more fuel)                   & \rocq{le\_linkb}, \rocq{le\_den}, \rocq{le\_total}                         \\
+    Lemma~\ref{lem:fresh} (no free anchor)             & \rocq{nf\_link}, \rocq{nf\_linkb}, \rocq{nf\_den}                          \\
+    Lemma~\ref{lem:rename} (renaming)                  & \rocq{kill\_close\_eq}, \rocq{eq\_link}, \rocq{eq\_linkb}                  \\
+    Corollary~\ref{cor:anchor} (each fresh anchor)     & \rocq{linkn\_mu}, \rocq{linkn\_tr\_killg}, \rocq{denote\_bind}             \\
+    Lemma~\ref{lem:subenv} (anchor of the environment) & \rocq{sub2\_linkb}                                                         \\
+    Lemma~\ref{lem:unroll} (unrolling)                 & \rocq{sub1\_linkv}, \rocq{link\_unroll}                                    \\
+    Lemma~\ref{lem:read} (read)                        & \rocq{read\_link}, \rocq{read\_link\_inv}                                  \\
+    Theorem~\ref{thm:linklink} (2 linkings, 1 linking) & \rocq{LLa\_fuel}, \rocq{LLb\_fuel}                                         \\
+    Corollary~\ref{cor:call} (calls)                   & \rocq{call\_a}, \rocq{call\_b}, \rocq{ap\_a}, \rocq{ap\_b}                 \\
+    Theorem~\ref{thm:adequacy} (adequacy)              & \rocq{adequacy\_fwd}, \rocq{adequacy\_bwd}                                 \\
+    Corollary~\ref{cor:termination} (termination)      & \rocq{termination}
+  \end{tabular}
+  \caption{The statements and their Rocq names.}
+  \label{tab:rocq}
+\end{table}
+
+\subsubsection{Fuel}
+
+\begin{lem}[More fuel]\label{lem:fuel}
+  Let $n\le m$.
+  \begin{enumerate}
+    \item $\runb{n}(\sigma,b)\ext\runb{m}(\sigma,b)$, $\lnkv{n}(\sigma,v)\ext\lnkv{m}(\sigma,v)$ and $\den{e}{n}\ext\den{e}{m}$.
+    \item If $t$ is finished and $t\ext t'$, then $t'=t$.
+  \end{enumerate}
+\end{lem}
+\begin{proof}
+  \step{f1}{If $t\ext t'$, and $k(v)\ext k'(v)$ for each $v$, then $t\bindt k\ext t'\bindt k'$.}
+  \begin{proof}
+    \pf\ By induction on $t$.
+  \end{proof}
+  \step{f2}{Assume that $\callt{n}(\sigma,b)\ext\callt{n+1}(\sigma,b)$ and $\lnkv{n}(\sigma,v)\ext\lnkv{n+1}(\sigma,v)$ for each $\sigma$, $b$ and $v$.
+    Then $\sigma_0\lk{n}X\ext\sigma_0\lk{n+1}X'$ for each $X\ext X'$, and $\den{e}{n}\ext\den{e}{n+1}$.}
+  \begin{proof}
+    \pf\ By induction on $X$, and on $e$.
+    Each case is a use of \stepref{f1}.
+    The function $\killf{\ell}$ is monotone.
+  \end{proof}
+  \step{f3}{Statement 1 holds.}
+  \begin{proof}
+    \pf\ By induction on $n$.
+    At the fuel $0$ the traces are $\bot$.
+    The step is \stepref{f2}.
+  \end{proof}
+  \step{f4}{Statement 2 holds.}
+  \begin{proof}
+    \pf\ By induction on $t$.
+    A finished trace has no $\bot$, and $\ext$ keeps each value.
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By \stepref{f3} and \stepref{f4}.
+  \end{proof}
+\end{proof}
+
+By Lemma~\ref{lem:fuel}, more fuel does not change a finished trace.
+So a result at one fuel is the result at each larger fuel.
+
+\subsubsection{Anchors}\label{sec:anchors}
+
+\begin{lem}[Linking adds no free anchor]\label{lem:fresh}
+  Let $\ell\neq\dead$.
+  \begin{enumerate}
+    \item If $\ell$ is fresh for $\sigma_0$ and for $X$, then $\ell$ is fresh for each value of $\sigma_0\lk{n}X$.
+    \item If $\ell$ is fresh for $\sigma$, then $\ell$ is fresh for each value of $\runb{n}(\sigma,b)$.
+    \item $\ell$ is fresh for each value of $\den{e}{n}$.
+  \end{enumerate}
+\end{lem}
+\begin{proof}
+  \pfsketch\ The proof is an induction on $n$.
+  The 2 cases that are not structural are the recursive value and the binding.
+  \step{n1}{\assume{Statements 1 and 2 hold for $\lnkv{n}$ and $\runb{n}$.}\prove{Statement 1 holds for $\sigma_0\lk{n}(x,\muval{v})\cons\sigma$.}}
+  \begin{proof}
+    \step{n11}{\pflet{$\ell'=\fresh(\sigma_0,v)$ and $T=\lnkv{n}(\sigma_0,\openloc{\ell'}{v})$.}}
+    \step{n12}{\case{$\ell=\ell'$.}}
+    \begin{proof}
+      \pf\ $\killf{\ell}$ takes $\ell$ out of the spine of $T$.
+      For each leaf $v'$ of $T$, $\ell$ is fresh for $\closeloc{\ell}{v'}$.
+    \end{proof}
+    \step{n13}{\case{$\ell\neq\ell'$.}}
+    \begin{proof}
+      \pf\ $\ell$ is fresh for $\openloc{\ell'}{v}$.
+      By the assumption, $\ell$ is fresh for each value of $T$.
+      $\killf{\ell'}$ and the close of $\ell'$ keep $\ell$ fresh, because $\ell\neq\dead$.
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By \stepref{n12} and \stepref{n13}.
+    \end{proof}
+  \end{proof}
+  \step{n2}{\assume{Statement 2 holds for $\runb{n}$.}\prove{Statement 3 holds for $\den{\synbind{x}{e_1}{e_2}}{n}$.}}
+  \begin{proof}
+    \pf\ As in \stepref{n1}, with the anchor $1$ in the place of $\ell'$.
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By induction on $n$.
+    Statement 3 at $n$ uses statement 2 at $n$ and \stepref{n2}.
+    Statements 1 and 2 at $n+1$ use the statements at $n$ and \stepref{n1}.
+    Each other case is structural.
+  \end{proof}
+\end{proof}
+
+\begin{lem}[Renaming]\label{lem:rename}
+  Let $\xi$ be a function on names with $\xi(\dead)=\dead$.
+  \begin{enumerate}
+    \item $\xi(\sigma_0)\lk{n}\xi(X)=\xi(\sigma_0\lk{n}X)$.
+    \item $\runb{n}(\xi(\sigma),b)=\xi(\runb{n}(\sigma,b))$.
+  \end{enumerate}
+  The two sides are equal as traces.
+\end{lem}
+\begin{proof}
+  \step{r1}{\assume{
+      \begin{pfenum}
+        \item $T$ is a trace, $\ell_1\neq\dead$, and $\xi'$ is $\xi$ with $\ell_2$ made $\ell_1$.
+        \item No name $y\neq\ell_2$ with $\xi(y)=\ell_1$ is free in $T$.
+        \item $k_1(\xi(w))=\xi(k_2(w))$ for each $w$.
+      \end{pfenum}}
+    \prove{$\killf{\ell_1}(\xi'(T))\bindt\lambda v.k_1(\closeloc{\ell_1}{v})=\xi(\killf{\ell_2}(T)\bindt\lambda v.k_2(\closeloc{\ell_2}{v}))$.}}
+  \begin{proof}
+    \step{r11}{For each value $u$ of the spine of $T$, the kill of $\ell_1$ in $\xi'(u)$ is $\xi$ of the kill of $\ell_2$ in $u$.}
+    \begin{proof}
+      \pf\ The 2 renamings agree on each name of $u$.
+      They take $\ell_2$ to $\dead$.
+      By assumption 2, $\xi$ takes no other name of $u$ to $\ell_1$.
+    \end{proof}
+    \step{r12}{For each leaf $v$ of $T$, $\closeloc{\ell_1}{\xi'(v)}=\xi(\closeloc{\ell_2}{v})$.}
+    \begin{proof}
+      \pf\ By assumption 2, $\xi'$ takes only $\ell_2$ to $\ell_1$.
+      So the close of $\ell_1$ after $\xi'$ is $\xi'$ after the close of $\ell_2$.
+      After the close, $\ell_2$ is fresh, so $\xi'$ and $\xi$ give the same value.
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By \stepref{r11}, \stepref{r12} and assumption 3.
+    \end{proof}
+  \end{proof}
+  \step{r2}{\assume{The statements hold at the fuel $n$ for $\lnkv{n}$ and $\runb{n}$.}\prove{Statement 1 holds for $(x,\muval{v})\cons\sigma$.}}
+  \begin{proof}
+    \step{r21}{\pflet{$\ell_1=\fresh(\xi(\sigma_0),\xi(v))$, $\ell_2=\fresh(\sigma_0,v)$, and $\xi'$ is $\xi$ with $\ell_2$ made $\ell_1$.}}
+    \step{r22}{$\lnkv{n}(\xi(\sigma_0),\openloc{\ell_1}{\xi(v)})=\xi'(\lnkv{n}(\sigma_0,\openloc{\ell_2}{v}))$.}
+    \begin{proof}
+      \pf\ $\ell_2$ is fresh for $\sigma_0$ and for $v$.
+      So $\xi'(\sigma_0)=\xi(\sigma_0)$ and $\xi'(\openloc{\ell_2}{v})=\openloc{\ell_1}{\xi(v)}$.
+      Then use the assumption for $\xi'$.
+    \end{proof}
+    \step{r23}{No name $y\neq\ell_2$ with $\xi(y)=\ell_1$ is free in $\lnkv{n}(\sigma_0,\openloc{\ell_2}{v})$.}
+    \begin{proof}
+      \pf\ $\ell_1$ is fresh for $\xi(\sigma_0)$ and for $\xi(v)$.
+      So such a $y$ is fresh for $\sigma_0$ and for $\openloc{\ell_2}{v}$, and $y\neq\dead$.
+      By Lemma~\ref{lem:fresh}, $y$ is fresh for the trace.
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By \stepref{r1}, \stepref{r22} and \stepref{r23}.
+    \end{proof}
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By induction on $n$, and then on $X$.
+    The case of a recursive value is \stepref{r2}.
+    In each other case, the renaming moves through $\bindt$.
+    For statement 2, $\xi(\den{e}{n})=\den{e}{n}$ by Lemma~\ref{lem:fresh}, because $\xi(\dead)=\dead$.
+  \end{proof}
+\end{proof}
+
+\begin{cor}[Each fresh anchor]\label{cor:anchor}
+  Let $\ell\neq\dead$.
+  \begin{enumerate}
+    \item If $\ell$ is fresh for $\sigma_0$ and for $v$, then the equation of $\sigma_0\lk{n}(x,\muval{v})\cons\sigma$ holds with this $\ell$.
+    \item If $\ell$ is fresh for $\sigma_0$, then $\sigma_0\splk{n}\killf{\ell}(t)=\killf{\ell}(\sigma_0\splk{n}t)$.
+    \item The equation of $\den{\synbind{x}{e_1}{e_2}}{n}$ holds with $\ell$ in the place of the anchor $1$.
+  \end{enumerate}
+\end{cor}
+\begin{proof}
+  \pf\ For statements 1 and 3, let $\xi'$ take the anchor of the equation to $\ell$ and keep each other name.
+  By Lemma~\ref{lem:rename}, the trace with the anchor $\ell$ is the $\xi'$-renaming of the trace of the equation.
+  Then use step $\langle1\rangle1$ of Lemma~\ref{lem:rename} with the identity for $\xi$.
+  For statement 2, let $\kappa$ take $\ell$ to $\dead$ and keep each other name.
+  Then $\kappa(\sigma_0)=\sigma_0$.
+  By Lemma~\ref{lem:rename}, linking into $\kappa(u)$ gives the $\kappa$-renaming of linking into $u$, for each guard $u$.
+\end{proof}
+
+\begin{lem}[An anchor of the environment]\label{lem:subenv}
+  Let $\ell\neq\dead$, and let $\muval{W}$ be a recursive value.
+  If $\ell$ is fresh for $X$, then $\repl{(\sigma_0\lk{n}X)}{W}{\ell}\ext\repl{\sigma_0}{W}{\ell}\lk{n}X$.
+  Also $\repl{\runb{n}(\sigma,b)}{W}{\ell}\ext\runb{n}(\repl{\sigma}{W}{\ell},b)$.
+  Thus if $\runb{n}(\sigma,b)$ has the result $r$, then $\runb{n}(\repl{\sigma}{W}{\ell},b)$ has the result $\repl{r}{W}{\ell}$.
+\end{lem}
+\begin{proof}
+  \step{e1}{If $\sigma(x)=v$, then $\repl{\sigma}{W}{\ell}(x)=\repl{v}{W}{\ell}$.}
+  \begin{proof}
+    \pf\ By induction on $\sigma$.
+    The replacement moves through unroll, because $\muval{W}$ is locally closed.
+    The read of an entry $(x,\ell)$ is not defined, so this case does not occur.
+  \end{proof}
+  \step{e2}{The 2 inequalities hold.}
+  \begin{proof}
+    \pf\ By induction on $n$, and then on $X$.
+    A read uses \stepref{e1}.
+    When $\sigma(x)$ is not defined, the first trace is $\bot$, and each trace extends $\bot$.
+    For a recursive value, open the 2 sides with one anchor that is fresh for $\sigma_0$, $\repl{\sigma_0}{W}{\ell}$, the value and $W$ (Corollary~\ref{cor:anchor}).
+    The replacement moves through the kill and the close of that anchor.
+    For a body, $\ell$ is fresh for $\den{e}{n}$ by Lemma~\ref{lem:fresh}.
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By \stepref{e2} and Lemma~\ref{lem:fuel}.
+  \end{proof}
+\end{proof}
+
+\begin{lem}[Unrolling]\label{lem:unroll}
+  Let $\ell\neq\dead$ be fresh for $\Sigma_0$ and for $w$.
+  Assume that $\lnkv{N}(\Sigma_0,\openloc{\ell}{w})$ has the result $w'$, and let $W=\closeloc{\ell}{w'}$.
+  Then $\Sigma_0\lk{m}\unroll(\muval{w})$ has the result $\unroll(\muval{W})$, for each $m\ge 2N$.
+\end{lem}
+\begin{proof}
+  \step{u1}{$\unroll(\muval{w})=\repl{(\openloc{\ell}{w})}{w}{\ell}$ and $\unroll(\muval{W})=\repl{w'}{W}{\ell}$.}
+  \begin{proof}
+    \pf\ $\ell$ is fresh for $w$, so to unroll is to open with $\ell$ and then to replace $\ell$.
+    The value $w'$ is locally closed, so $\openloc{\ell}{W}=w'$.
+  \end{proof}
+  \step{u2}{For each $n$, $v$ and $r$: if $\lnkv{n}(\Sigma_0,v)$ has the result $r$, then $\lnkv{m}(\Sigma_0,\repl{v}{w}{\ell})$ has the result $\repl{r}{W}{\ell}$ for each $m\ge n+N$.}
+  \begin{proof}
+    \pfsketch\ By induction on $n$, and then on $v$.
+    Each structural case uses the induction hypothesis on the parts.
+    \step{u21}{\case{$v$ is the entry $(x,\ell)\cons\sigma$.}}
+    \begin{proof}
+      \pf\ The replaced entry is $(x,\muval{w})$.
+      By Corollary~\ref{cor:anchor}, linking opens it with $\ell$.
+      By the assumption and Lemma~\ref{lem:fuel}, $\lnkv{m}(\Sigma_0,\openloc{\ell}{w})$ has the result $w'$.
+      So the linked entry is $(x,\muval{W})$.
+    \end{proof}
+    \step{u22}{\case{$v$ is the entry $(x,\muval{u})\cons\sigma$.}}
+    \begin{proof}
+      \pf\ Open with one anchor $\ell_2$ that is fresh for $\Sigma_0$, $u$, $w$ and $W$, and that is not $\ell$.
+      The induction hypothesis on $n$ applies to $\openloc{\ell_2}{u}$.
+      The replacement moves through the open and the close of $\ell_2$.
+    \end{proof}
+    \step{u23}{\case{$v$ is $\ReadE(S,x)$, and $S$ links to a module $\sigma$.}}
+    \begin{proof}
+      \pf\ By the induction hypothesis, $\repl{S}{w}{\ell}$ links to $\repl{\sigma}{W}{\ell}$.
+      By step $\langle1\rangle1$ of Lemma~\ref{lem:subenv}, the read gives $\repl{\sigma(x)}{W}{\ell}$.
+    \end{proof}
+    \step{u24}{\case{$v$ is $\CallE(S,a)$, and $S$ links to a closure.}}
+    \begin{proof}
+      \pf\ The call enters the body of the closure with an environment $\sigma$.
+      By the induction hypothesis, the call after the replacement has the environment $\repl{\sigma}{W}{\ell}$.
+      By Lemma~\ref{lem:subenv}, its result is the result of the first call with $\ell$ replaced.
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By the cases, and by the induction hypothesis in each other case.
+      In the case $\InitE$, $\ell$ is fresh for $\Sigma_0$.
+    \end{proof}
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By \stepref{u2} with $v=\openloc{\ell}{w}$, $n=N$ and $r=w'$, and by \stepref{u1}.
+  \end{proof}
+\end{proof}
+
+\begin{lem}[Read]\label{lem:read}
+  Assume that $\Sigma_0\lk{m}\sigma$ has the result $\sigma'$.
+  \begin{enumerate}
+    \item If $\sigma(x)=v$ and $\Sigma_0\lk{m}v$ has the result $r$, then $\sigma'(x)=r$.
+    \item If $\sigma'(x)=r$, then $\sigma(x)=v$ for some $v$, and from some fuel $\Sigma_0\lk{m'}v$ has the result $r$.
+  \end{enumerate}
+\end{lem}
+\begin{proof}
+  \pf\ By induction on $\sigma$.
+  The case of an entry $(x,\muval{w})$ needs an argument.
+  Linking opens the entry with a fresh anchor $\ell$, and $\lnkv{m}(\Sigma_0,\openloc{\ell}{w})$ has a result $w'$.
+  The linked entry is $(x,\muval{W})$ with $W=\closeloc{\ell}{w'}$.
+  By Lemma~\ref{lem:unroll}, $\Sigma_0\lk{m'}\unroll(\muval{w})$ has the result $\unroll(\muval{W})$ for each $m'\ge 2m$.
+  This is statement 2.
+  For statement 1, the result $r$ at the fuel $m$ is the result at the fuel $2m$, by Lemma~\ref{lem:fuel}.
+\end{proof}
+
+\subsubsection{2 Linkings and 1 Linking}
+
+Fix an environment $\Sigma_0$.
+An environment $\sigma$ \emph{resolves to} $\sigma'$ when $\Sigma_0\lk{m}\sigma$ has the result $\sigma'$ at some fuel $m$.
+By Lemma~\ref{lem:fuel}, $\sigma$ resolves to at most one environment.
+In a trace $\Sigma_0\lk{m}(\sigma\lk{n}X)$, the linking of $\sigma$ is the inner linking, and the linking of $\Sigma_0$ is the outer linking.
+
+\begin{thm}[2 linkings and 1 linking]\label{thm:linklink}
+  Assume that $\sigma$ resolves to $\sigma'$.
+  Let $R_n(\sigma,X)$ be $\runb{n}(\sigma,b)$ for a body $X=b$, or $\lnkv{n}(\sigma,v)$ for a value $X=v$.
+  \begin{enumerate}
+    \item[(a)] If $\Sigma_0\lk{m}R_n(\sigma,X)$ has the result $r$, then from some fuel $R_{m_2}(\sigma',X)$ has the result $r$.
+          Its cost is at most $\cost(\Sigma_0\lk{m}R_n(\sigma,X))$.
+    \item[(b)] If $R_{m'}(\sigma',X)$ has the result $r$, then from some pair of fuels $\Sigma_0\lk{m}R_n(\sigma,X)$ has the result $r$.
+  \end{enumerate}
+\end{thm}
+\begin{proof}
+  \pfsketch\ Direction (a) is an induction on the fuel $n$ of the inner linking.
+  Direction (b) is an induction on the fuel $m'$ of the 1 linking.
+  Steps $\langle1\rangle1$ to $\langle1\rangle3$ prove (a), and step $\langle1\rangle4$ proves (b).
+  \step{a1}{\assume{Direction (a) holds at the fuel $n$.}
+    \prove{For each shadow, environment or value $X$: if $\Sigma_0\lk{m}(\sigma\lk{n}X)$ has the result $r$, then from some fuel $\sigma'\lk{m_2}X$ has the result $r$, at no more cost.}}
+  \begin{proof}
+    \pfsketch\ By induction on $X$.
+    The outer linking of a trace $t\bindt k$ links into the spine of $t$, and then into $k(w)$ for the leaf $w$.
+    \step{a11}{\case{$X=\InitE$.}}
+    \begin{proof}
+      \pf\ The inner trace is the leaf $\sigma$, so $r$ is the result of $\Sigma_0\lk{m}\sigma$.
+      Thus $r=\sigma'$, and $\sigma'\lk{m_2}\InitE$ is the leaf $\sigma'$.
+    \end{proof}
+    \step{a12}{\case{$X=\ReadE(S,x)$.}}
+    \begin{proof}
+      \pf\ Let $w$ be the leaf of the inner linking into $S$.
+      If $w$ is a module $\sigma_1$, the inner trace ends with $\guardt{\sigma_1}{\sigma_1(x)}$.
+      The outer linking resolves $\sigma_1$ to some $\sigma_1'$, and $\sigma_1(x)$ to $r$.
+      By Lemma~\ref{lem:read}, $\sigma_1'(x)=r$.
+      By the induction hypothesis, $\sigma'\lk{m_2}S$ has the result $\sigma_1'$.
+      So $\sigma'\lk{m_2}\ReadE(S,x)$ ends with $\guardt{\sigma_1'}{r}$.
+      If $w$ is a shadow, the outer linking makes the read.
+      Then the induction hypothesis gives the same module on the 2 sides.
+    \end{proof}
+    \step{a13}{\case{$X=\CallE(S,v)$.}}
+    \begin{proof}
+      \pf\ Let $f$ and $a$ be the leaves of the inner linkings into $S$ and $v$.
+      The outer linking resolves them to some $f'$ and $a'$.
+      By the induction hypothesis, $\sigma'\lk{m_2}S$ and $\sigma'\lk{m_2}v$ have the results $f'$ and $a'$.
+      If $f$ is a shadow, the outer linking makes the call $\apf{m}(f',a')$, and more fuel keeps its result.
+      If $f$ is a closure $\langle\lambda x.b,\sigma_1\rangle$, the inner linking entered $b$ with $(x,a)\cons\sigma_1$.
+      This environment resolves to $(x,a')\cons\sigma_1'$, the environment of the call $\apf{m_2}(f',a')$.
+      The assumption for the body $b$ gives the result $r$.
+    \end{proof}
+    \step{a14}{\case{$X=(x,\muval{w})\cons\sigma_1$.}}
+    \begin{proof}
+      \step{a141}{\pflet{$\ell\neq\dead$ is fresh for $\Sigma_0$, $\sigma$, $\sigma'$ and $w$, and $T=\lnkv{n}(\sigma,\openloc{\ell}{w})$.}}
+      \step{a142}{The outer linking into the spine of $\killf{\ell}(T)$ has a result $w_1$, the leaf of the spine of $T$.}
+      \begin{proof}
+        \pf\ By Corollary~\ref{cor:anchor}, the inner linking opens with $\ell$, and the outer linking moves through $\killf{\ell}$.
+      \end{proof}
+      \step{a143}{$\Sigma_0\lk{m}T$ has a result $w_2$, and $r$ is $(x,\muval{\closeloc{\ell}{w_2}})\cons\sigma_2$.}
+      \begin{proof}
+        \pf\ The inner leaf is $(x,\muval{\closeloc{\ell}{w_1}})\cons\sigma_1''$.
+        By Corollary~\ref{cor:anchor}, the outer linking opens it with $\ell$.
+        The value $w_1$ is locally closed, so the opened value is $w_1$.
+        So $\lnkv{m}(\Sigma_0,w_1)$ has a result $w_2$.
+        By Lemma~\ref{lem:fuel}, $\Sigma_0\lk{m}w_1$ has the same result.
+      \end{proof}
+      \qedstep
+      \begin{proof}
+        \pf\ By the assumption for the value $\openloc{\ell}{w}$ and \stepref{a143}, $\lnkv{m_2}(\sigma',\openloc{\ell}{w})$ has the result $w_2$ from some fuel.
+        By Corollary~\ref{cor:anchor}, $\sigma'\lk{m_2}X$ opens with $\ell$.
+        The induction hypothesis for $\sigma_1$ gives $\sigma_2$.
+        The costs of the parts add on the 2 sides.
+      \end{proof}
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By the cases.
+      Each other case uses the induction hypothesis on its parts.
+    \end{proof}
+  \end{proof}
+  \step{a2}{\assume{Direction (a) holds at the fuel $n$.}
+    \prove{For each trace $t$: if $\Sigma_0\splk{m}(\sigma\splk{n}t)$ has the result $w$, then from some fuel $\sigma'\splk{m_2}t$ has the result $w$, at no more cost.}}
+  \begin{proof}
+    \pf\ By induction on $t$.
+    For a guard $\guardt{u}{t'}$, use \stepref{a1} for $u$.
+    For a branch node, use \stepref{a1} for the scrutinee.
+    If the inner linking gives a shadow, the outer linking selects the branch.
+    If not, the inner linking selects the branch.
+    The 1 linking selects the same branch in the 2 cases.
+  \end{proof}
+  \step{a3}{Direction (a) holds.}
+  \begin{proof}
+    \pf\ By induction on $n$.
+    At the fuel $0$ the inner trace is $\bot$, and $\Sigma_0\lk{m}\bot$ is not finished.
+    For a body at $n+1$, the inner trace is $\sigma\lk{n}b(n)$.
+    Use \stepref{a2} for the spine of $b(n)$, and \stepref{a1} for its leaf.
+    By Lemma~\ref{lem:fuel}, $b(m_2)$ extends $b(n)$ and gives the same finished trace.
+    For a value at $n+1$, use \stepref{a1}.
+  \end{proof}
+  \step{b1}{Direction (b) holds.}
+  \begin{proof}
+    \pfsketch\ By induction on $m'$, with the same 3 steps as (a) in the inverse direction.
+    The statement for a shadow, an environment or a value $X$ is:
+    if $\sigma'\lk{m'}X$ has the result $r$, then from some pair of fuels $\Sigma_0\lk{m}(\sigma\lk{n}X)$ has the result $r$.
+    \step{b11}{\case{$X=\ReadE(S,x)$, and $\sigma'\lk{m'}S$ has the result $\sigma_1'$ with $\sigma_1'(x)=r$.}}
+    \begin{proof}
+      \pf\ By the induction hypothesis, from some pair of fuels the 2 linkings into $S$ have the result $\sigma_1'$.
+      Let $w$ be the leaf of the inner linking.
+      More fuel does not change $w$.
+      If $w$ is a module $\sigma_1$, then $\sigma_1$ resolves to $\sigma_1'$.
+      By Lemma~\ref{lem:read}, $\sigma_1(x)=v$ and $\Sigma_0\lk{m}v$ has the result $r$ from some fuel.
+      So the outer linking into $\guardt{\sigma_1}{v}$ has the result $r$ from some fuel.
+    \end{proof}
+    \step{b12}{\case{$X=(x,\muval{w})\cons\sigma_1$.}}
+    \begin{proof}
+      \pf\ Take $\ell$ as in step $\langle2\rangle4$ of (a).
+      $\lnkv{m'}(\sigma',\openloc{\ell}{w})$ has a result $w_2$.
+      By the induction hypothesis on $m'$, from some pair of fuels $\Sigma_0\lk{m}\lnkv{n}(\sigma,\openloc{\ell}{w})$ has the result $w_2$.
+      Let $w_1$ be the leaf of its spine.
+      The outer linking opens $(x,\muval{\closeloc{\ell}{w_1}})$ with $\ell$, and links into $w_1$ at the fuel $m-1$.
+      So the statement holds from the pair of fuels with one more unit for $m$.
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By the cases, and by the induction hypothesis in each other case.
+      The case of a call that enters a body uses the induction hypothesis on $m'$.
+    \end{proof}
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ By \stepref{a3} and \stepref{b1}.
+  \end{proof}
+\end{proof}
+
+\begin{cor}[Calls]\label{cor:call}
+  \begin{enumerate}
+    \item[(a)] If $\Sigma_0\lk{m}\callt{n}(\sigma,b)$ has the result $r$, then $\Sigma_0\lk{m}\sigma$ has a result $\sigma'$.
+          From some fuel, $\runb{m_2}(\sigma',b)$ has the result $r$ and a cost below $\cost(\Sigma_0\lk{m}\callt{n}(\sigma,b))$.
+    \item[(b)] If $\sigma$ resolves to $\sigma'$ and $\runb{m'}(\sigma',b)$ has the result $r$, then from some pair of fuels $\Sigma_0\lk{m}\callt{n}(\sigma,b)$ has the result $r$.
+  \end{enumerate}
+  The same holds for $\apf{n}(f,a)$, with the results of $\Sigma_0\lk{m}f$ and $\Sigma_0\lk{m}a$.
+\end{cor}
+\begin{proof}
+  \pf\ A call is the guard $\guardt{\sigma}{\runb{n}(\sigma,b)}$.
+  The outer linking resolves $\sigma$, and then links into $\runb{n}(\sigma,b)$.
+  Use Theorem~\ref{thm:linklink}.
+  The guard gives the strict inequality of the costs.
+\end{proof}
+
+\subsubsection{Adequacy}
+
+\begin{thm}[Adequacy]\label{thm:adequacy}
+  Let $\rho$ be locally closed.
+  \begin{enumerate}
+    \item If $\evalf{N}(e,\rho)=u$, then $\runb{n}(\lift{\rho},\sembracket{e})$ has the result $\lift{u}$ for some $n$.
+    \item If $\runb{n}(\lift{\rho},\sembracket{e})$ has the result $w$, then $\evalf{N}(e,\rho)=u$ for some $N$ and $u$, and $w=\lift{u}$.
+  \end{enumerate}
+\end{thm}
+\begin{proof}
+  \pfsketch\ In this proof $\Sigma_0$ is $\lift{\rho}$.
+  A lifted value has no shadow.
+  The trace $\runb{m+1}(\lift{\rho},\sembracket{e})$ is $\lift{\rho}\lk{m}\den{e}{m}$.
+  Statement 1 is an induction on $N$.
+  Statement 2 is an induction on the cost of the finished trace.
+  \step{w1}{\assume{$\evalf{N}(e,\rho)=u$, and statement 1 holds for each smaller fuel of the interpreter.}
+    \prove{From some fuel, $\lift{\rho}\lk{m}\den{e}{m}$ has the result $\lift{u}$.}}
+  \begin{proof}
+    \step{w11}{\case{$e=x$.}}
+    \begin{proof}
+      \pf\ The trace is $\guardt{\lift{\rho}}{\lift{\rho}(x)}$.
+      The lift moves through a read, so $\lift{\rho}(x)=\lift{(\rho(x))}$.
+    \end{proof}
+    \step{w12}{\case{$e=e_1\:e_2$.}}
+    \begin{proof}
+      \pf\ The interpreter gives a closure $\langle\lambda x.e',\rho_1\rangle$ for $e_1$, a value $u_2$ for $e_2$, and $u$ for $e'$ in $(x,u_2)\cons\rho_1$.
+      By the assumption, the traces of $e_1$ and $e_2$ have the lifts of these values as results.
+      Let $f$ and $a$ be the leaves of their spines.
+      By the assumption for $e'$, the call of the lifted closure at $\lift{u_2}$ has the result $\lift{u}$.
+      By Corollary~\ref{cor:call}(b), $\lift{\rho}\lk{m}\apf{m}(f,a)$ has the result $\lift{u}$ from some fuel.
+    \end{proof}
+    \step{w13}{\case{$e=\synbind{x}{e_1}{e_2}$.}}
+    \begin{proof}
+      \step{w131}{\pflet{$\ell=\fresh(\rho)$, $\evalf{N-1}(e_1,(x,\ell)\cons\rho)=u_1$, and $\evalf{N-1}(e_2,(x,\muval{\closeloc{\ell}{u_1}})\cons\rho)=\rho_2$.}}
+      \step{w132}{The trace of the binding is the trace of Corollary~\ref{cor:anchor}(3) with the anchor $\ell$.}
+      \begin{proof}
+        \pf\ $\ell\neq\dead$.
+      \end{proof}
+      \step{w133}{From some fuel, $\lift{\rho}\lk{m}\callt{m}((x,\ell)\cons[\InitE],\sembracket{e_1})$ has the result $\lift{u_1}$.}
+      \begin{proof}
+        \pf\ The environment $(x,\ell)\cons[\InitE]$ resolves to $\lift{((x,\ell)\cons\rho)}$.
+        Use the assumption for $e_1$ and Corollary~\ref{cor:call}(b).
+      \end{proof}
+      \step{w134}{\pflet{$v_1$ is the leaf of the spine of the trace of \stepref{w133}. Then $\lift{\rho}\lk{m}v_1$ has the result $\lift{u_1}$.}}
+      \step{w135}{The environment $(x,\muval{\closeloc{\ell}{v_1}})\cons[\InitE]$ resolves to $\lift{((x,\muval{\closeloc{\ell}{u_1}})\cons\rho)}$.}
+      \begin{proof}
+        \pf\ $\ell$ is fresh for $\lift{\rho}$.
+        By Corollary~\ref{cor:anchor}, linking opens the entry with $\ell$, which gives $v_1$.
+        Use \stepref{w134}.
+        The lift moves through the close.
+      \end{proof}
+      \step{w136}{From some fuel, $\lift{\rho}\lk{m}\callt{m}((x,\muval{\closeloc{\ell}{v_1}})\cons[\InitE],\sembracket{e_2})$ has the result $\lift{\rho_2}$.}
+      \begin{proof}
+        \pf\ By \stepref{w135}, the assumption for $e_2$ and Corollary~\ref{cor:call}(b).
+      \end{proof}
+      \qedstep
+      \begin{proof}
+        \pf\ By Corollary~\ref{cor:anchor}(2), the spine of the killed call of $e_1$ links to the leaf $v_1$.
+        By \stepref{w136}, the leaf $m$ of the call of $e_2$ resolves to $\lift{\rho_2}$.
+        The last leaf is $(x,\muval{\closeloc{\ell}{v_1}})\cons\modf(m)$.
+        By \stepref{w135} it links to $(x,\muval{\closeloc{\ell}{\lift{u_1}}})\cons\lift{\rho_2}$, the lift of the value of the interpreter.
+      \end{proof}
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By the cases.
+      A link term and a match enter a body as in \stepref{w12}.
+      A function, the empty module and a constructor have no call.
+    \end{proof}
+  \end{proof}
+  \step{w2}{\assume{$\lift{\rho}\lk{m}\den{e}{m}$ has the result $w$ and the cost $c$, and statement 2 holds for each trace of a smaller cost.}
+    \prove{$\evalf{N}(e,\rho)=u$ for some $N$ and $u$, and $w=\lift{u}$.}}
+  \begin{proof}
+    \pfsketch\ By induction on $e$, for each $w$ and each cost of at most $c$.
+    A part of $e$ that runs in the same environment has a trace of at most the same cost.
+    \step{w21}{\assume{$\lift{\rho}\lk{m}\callt{m}(\sigma,\sembracket{e'})$ has the result $w'$ at a cost of at most $c$, and $\sigma$ resolves to $\lift{\rho'}$.}
+      \prove{$\evalf{N}(e',\rho')=u'$ for some $N$ and $u'$, and $w'=\lift{u'}$.}}
+    \begin{proof}
+      \pf\ By Corollary~\ref{cor:call}(a), $\runb{m_2}(\lift{\rho'},\sembracket{e'})$ has the result $w'$ at a cost below $c$.
+      Use the assumption.
+    \end{proof}
+    \step{w22}{\case{$e=e_1\:e_2$.}}
+    \begin{proof}
+      \pf\ Let $f$ and $a$ be the leaves of the spines of $e_1$ and $e_2$.
+      By Corollary~\ref{cor:call}(a), linking resolves them to some $f'$ and $a'$, and $\apf{m_2}(f',a')$ has the result $w$ at no more cost.
+      By the induction hypothesis on $e$, $f'$ and $a'$ are the lifts of values of the interpreter.
+      So $f'$ is a lifted closure, and $\apf{m_2}(f',a')$ is a call behind a guard.
+      Its body has a smaller cost, and the assumption applies.
+    \end{proof}
+    \step{w23}{\case{$e=\synbind{x}{e_1}{e_2}$.}}
+    \begin{proof}
+      \step{w231}{\pflet{$\ell=\fresh(\rho)$, and the trace of the binding is the trace with the anchor $\ell$.}}
+      \step{w232}{The spine of the call of $e_1$ has a leaf $v_1$, and $\lift{\rho}\lk{m}v_1$ has a result $v_1'$.}
+      \begin{proof}
+        \pf\ By Corollary~\ref{cor:anchor}(2), the outer linking moves through $\killf{\ell}$.
+        The call of $e_2$ starts with a guard on $(x,\muval{\closeloc{\ell}{v_1}})\cons[\InitE]$.
+        Linking opens this entry with $\ell$, and resolves $v_1$.
+      \end{proof}
+      \step{w233}{$\evalf{N_1}(e_1,(x,\ell)\cons\rho)=u_1$ for some $N_1$ and $u_1$, and $v_1'=\lift{u_1}$.}
+      \begin{proof}
+        \pf\ By \stepref{w232}, the linked call of $e_1$ is finished with the result $v_1'$.
+        Its cost is below the cost of the whole trace, because the guard of the call of $e_2$ follows it.
+        Use \stepref{w21}.
+      \end{proof}
+      \step{w234}{$\evalf{N_2}(e_2,(x,\muval{\closeloc{\ell}{u_1}})\cons\rho)=\rho_2$ for some $N_2$ and $\rho_2$.}
+      \begin{proof}
+        \pf\ By \stepref{w233}, the environment of the call of $e_2$ resolves to the lift of $(x,\muval{\closeloc{\ell}{u_1}})\cons\rho$.
+        Use \stepref{w21}.
+        The result is a module, because the last leaf takes a module.
+      \end{proof}
+      \qedstep
+      \begin{proof}
+        \pf\ By \stepref{w233} and \stepref{w234}, the interpreter gives $(x,\muval{\closeloc{\ell}{u_1}})\cons\rho_2$.
+        The last leaf links to its lift, as in the forward direction.
+      \end{proof}
+    \end{proof}
+    \qedstep
+    \begin{proof}
+      \pf\ By the cases.
+      A link term and a match use \stepref{w21}.
+      A variable reads a lifted value.
+    \end{proof}
+  \end{proof}
+  \qedstep
+  \begin{proof}
+    \pf\ Statement 1 is \stepref{w1} by induction on $N$.
+    Statement 2 is \stepref{w2} by induction on the cost.
+  \end{proof}
+\end{proof}
+
+\begin{cor}[Termination]\label{cor:termination}
+  A closed term $e$ has a value in the interpreter exactly when its denotation has a result in the empty environment.
+  That is, $\evalf{N}(e,\bullet)$ is defined for some $N$ exactly when $\runb{n}(\bullet,\sembracket{e})$ is finished for some $n$.
+\end{cor}
+\begin{proof}
+  \pf\ By Theorem~\ref{thm:adequacy}.
+  The empty environment is locally closed.
+\end{proof}

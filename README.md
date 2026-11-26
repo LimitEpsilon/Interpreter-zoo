@@ -18,6 +18,8 @@ A CPS transformer and evaluator of a functional language featuring `raise` and `
 
 ## Denotational semantics with adequacy ([denot/](denot/))
 
-A computable denotational semantics (no coinductive types) for the module
-language with constructors and matches, and a proof that it agrees with a
-standard interpreter. See [denot/README.md](denot/README.md).
+A computable denotational semantics for the module language with recursive
+bindings, constructors and matches. It uses no coinductive type. The directory
+proves that the semantics agrees with an interpreter. See
+[denot/README.md](denot/README.md). The document [doc/main.pdf](doc/main.pdf)
+gives the definitions and the proofs.

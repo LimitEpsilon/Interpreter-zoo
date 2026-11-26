@@ -1,12 +1,17 @@
 -Q . Denot
 Syntax.v
+Anchor.v
 Domain.v
+Nominal.v
 Semantics.v
 Laws.v
 Reference.v
 Wf.v
 Order.v
 Conv.v
+Fresh.v
+Equiv.v
+Subst.v
 LinkLink.v
 Lift.v
 Adequacy.v

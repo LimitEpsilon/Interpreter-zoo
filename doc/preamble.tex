@@ -27,9 +27,9 @@
 \counterwithin{example}{section}
 \newenvironment{example}[1][]
 {\refstepcounter{example}%
-\begin{proof}[{\normalfont\textit{Example~\theexample#1}}]%
+\begin{amsproof}[{\normalfont\textit{Example~\theexample#1}}]%
 \renewcommand*{\qedsymbol}{\(\blacksquare\)}}%
-{\end{proof}}
+{\end{amsproof}}
 
 %%% PL constructs
 \usepackage{galois} % not in acmart
@@ -96,7 +96,7 @@
 \newcommand*{\dom}{\textnormal{dom}}
 \newcommand*{\lfp}{\textnormal{lfp}}
 \newcommand*{\Step}{\textnormal{Step}}
-\newcommand*{\step}{\textnormal{step}}
+\newcommand*{\stepfn}{\textnormal{step}}
 
 \newcommand*{\Link}{\textnormal{Link}}
 \newcommand*{\link}{\textnormal{link}}
@@ -195,3 +195,48 @@
 \newcommand*{\selmem}[2][\!\!.\,]{{#2}#1\mathsf{\mem}}
 \newcommand*{\selclos}[2][\!\!.\,]{{#2}#1\mathsf{c}}
 
+%%% Structured proofs (L. Lamport, pf2.sty).
+%%% The package defines its own proof environment and its own \qed.
+%%% The proof environment of amsthm stays as amsproof.
+\let\amsproof\proof
+\let\endamsproof\endproof
+\let\proof\relax
+\let\endproof\relax
+\let\amsqed\qed
+\let\qed\relax
+\usepackage{pf2}
+
+%%% The denotational semantics of semantics.tex
+\newcommand*{\Trace}{\domainst{Trace}}
+\newcommand*{\Body}{\domainst{Body}}
+\newcommand*{\Cstr}{\domainst{Cstr}}
+\newcommand*{\FldE}{\textcolor{shadowcol}{\mathsf{Fld}}}
+\newcommand*{\MatchT}{\mathsf{Match}}
+%%% a guard: resolve #1 before #2
+\newcommand*{\guardt}[2]{{#1}\rightarrow{#2}}
+\newcommand*{\bindt}{\mathbin{\gg\!=}}
+%%% anchors: the dead anchor, an index, a recursive value
+\newcommand*{\dead}{\dagger}
+\newcommand*{\bidx}[1]{\underline{#1}}
+\newcommand*{\muval}[1]{\mu.{#1}}
+\newcommand*{\repl}[3]{{#1}[\muval{#2}/{#3}]}
+\newcommand*{\result}{\mathit{result}}
+\newcommand*{\cost}{\mathit{cost}}
+\newcommand*{\unroll}{\mathit{unroll}}
+\newcommand*{\fresh}{\mathit{fresh}}
+\newcommand*{\killf}[1]{\mathit{kill}_{#1}}
+%%% linking with fuel: into a value or a trace, into a spine, into a body, into the value of a recursive value
+\newcommand*{\lk}[1]{\mathbin{\semlink_{#1}}}
+\newcommand*{\splk}[1]{\mathbin{\semlink^{\circ}_{#1}}}
+\newcommand*{\runb}[1]{\mathit{run}_{#1}}
+\newcommand*{\lnkv}[1]{\mathit{lnk}_{#1}}
+\newcommand*{\callt}[1]{\mathit{call}_{#1}}
+\newcommand*{\apf}[1]{\mathit{ap}_{#1}}
+\newcommand*{\rdf}[1]{\mathit{rd}_{#1}}
+\newcommand*{\fldf}[2]{\mathit{fld}_{#1,#2}}
+\newcommand*{\modf}{\mathit{mod}}
+\newcommand*{\den}[2]{\sembracket{#1}_{#2}}
+\newcommand*{\lift}[1]{{\uparrow}{#1}}
+\newcommand*{\evalf}[1]{\mathit{eval}_{#1}}
+\newcommand*{\ext}{\sqsubseteq}
+\newcommand*{\rocq}[1]{\texttt{#1}}

@@ -1,21 +1,40 @@
 (** * Linking and the denotational semantics
 
-    [denote n e] is the n-th finite approximation of the denotation of [e].
-    It is computed by structural recursion on [e], knowing nothing about the
-    environment: free variables become shadows.  Linking an environment into
-    a trace resolves the shadows.
+    This file defines the denotation of a term and the linking of an
+    environment into a trace. [denote n e] is the trace of [e] at the fuel
+    [n]. It is a structural recursion on [e] that takes no environment. Each
+    free variable becomes a shadow, and linking resolves the shadows.
 
-    Guard discipline: whenever part of a resolved value is discarded
-    (projecting from a module, taking a field, selecting a branch, entering
-    a body), the whole value is kept in a [Guard], so that a later link still
-    has to resolve everything a call-by-value run would have computed. *)
+    ** Main definitions
+
+    - [link_vl], [link_tr], [link_trace]: link an environment into a value,
+      into the spine of a trace, and into a trace.
+    - [linkb], [linkv]: link into a body and into a value, with fuel.
+    - [call]: enter a body with an environment, behind a guard.
+    - [denote], [den]: the denotation of a term.
+    - [run]: the result of a term in an environment.
+
+    ** Notes
+
+    - Guards. When linking uses only a part of a resolved value, it keeps the
+      whole value in a guard. The cases are a read of a module, a field of a
+      constructor value, a branch of a match and the environment of a body. A
+      later linking must then resolve each value that a call-by-value run
+      computes.
+    - Recursive values. To link into a recursive value, [link_nv] opens it
+      with a fresh anchor, links, and closes it. It kills the anchor in the
+      spine.
+    - Fuel. The opened recursive value is not a structural part, so [link_nv]
+      takes its linking as the parameter [lk]. [linkv] gives [lk] by the same
+      fuel as [linkb]. *)
 From Stdlib Require Import Utf8 String Bool Arith List.
-From Denot Require Import Syntax Domain.
+From Denot Require Import Syntax Anchor Domain.
 
 Section link.
-  (** [cl σ b]: run the body [b] under [σ].  Supplied later, by fuel. *)
-  Context (cl : nv → body → trace).
+  Context (cl : nv → body → trace) (lk : nv → vl → trace).
 
+  (** Apply the function [f] to [a]. A shadow gives a call shadow. A closure
+      enters its body. *)
   Definition ap (f a : vl) : trace :=
     match f with
     | vl_sh s => Ret (vl_sh (Call s a))
@@ -23,6 +42,8 @@ Section link.
     | _ => Bot
     end.
 
+  (** Read the variable [x] of the module [m]. A module that is a shadow
+      gives a read shadow. *)
   Definition rd (x : var) (m : vl) : trace :=
     match m with
     | vl_exp σ =>
@@ -31,6 +52,8 @@ Section link.
     | _ => Bot
     end.
 
+  (** Take field [i] of the constructor value [m], when its name is [c]. A
+      shadow gives a field shadow. *)
   Definition ds (c : cstr) (i : nat) (m : vl) : trace :=
     match m with
     | vl_sh s => Ret (vl_sh (Dstr s c i))
@@ -43,6 +66,9 @@ Section link.
 
   Context (σ0 : nv).
 
+  (** Link [σ0] into a shadow, an environment, a value or a list of values.
+      Each leaf of [link_nv] is a module. Each leaf of [link_vls c] is a
+      constructor value of [c]. *)
   Fixpoint link_shdw (s : shdw) : trace :=
     match s with
     | Init => Ret (vl_exp σ0)
@@ -50,7 +76,6 @@ Section link.
     | Call s' v => bind (fun f => bind (fun a => ap f a) (link_vl v)) (link_shdw s')
     | Dstr s' c i => bind (ds c i) (link_shdw s')
     end
-  (* leaves of [link_nv] are always modules *)
   with link_nv (σ : nv) : trace :=
     match σ with
     | nv_mt => Ret (vl_exp nv_mt)
@@ -59,6 +84,15 @@ Section link.
       bind (fun v' =>
         bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x v' σ'')))) (link_nv σ'))
         (link_vl v)
+    | nv_mu x w σ' =>
+      (* Open with a fresh anchor, link, and close. Kill the anchor in the spine. *)
+      let ℓ := fresh σ0 w in
+      bind (fun w' =>
+        bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w') σ''))))
+          (link_nv σ'))
+        (killg ℓ (lk σ0 (open_vl 0 ℓ w)))
+    | nv_an x a σ' =>
+      bind (on_env (fun σ'' => Ret (vl_exp (nv_an x a σ'')))) (link_nv σ')
     end
   with link_vl (v : vl) : trace :=
     match v with
@@ -67,7 +101,6 @@ Section link.
     | vl_clos x b σ => bind (on_env (fun σ' => Ret (vl_clos x b σ'))) (link_nv σ)
     | vl_cstr c vs => link_vls c vs
     end
-  (* leaves of [link_vls c] are always [vl_cstr c _] *)
   with link_vls (c : cstr) (vs : vls) : trace :=
     match vs with
     | vnil => Ret (vl_cstr c vnil)
@@ -77,7 +110,8 @@ Section link.
         (link_vl v)
     end.
 
-  (** Link the spine of a trace; leaves are left as they are. *)
+  (** Link [σ0] into the spine of a trace. The leaves stay. [link_sel c n]
+      links into the branch for the constructor [c] with [n] fields. *)
   Fixpoint link_tr (t : trace) : trace :=
     match t with
     | Bot => Bot
@@ -103,30 +137,58 @@ Section link.
       if String.eqb c c' && Nat.eqb n n' then link_tr t else link_sel c n bs'
     end.
 
+  (** Link [σ0] into a trace, that is into the spine and then into the leaf. *)
   Definition link_trace (t : trace) : trace := bind link_vl (link_tr t).
 End link.
 
-(** Link into a body, with fuel for nested calls. *)
+(** ** Fuel *)
+
+(** [linkb n σ b] links [σ] into the body [b] at the fuel [n]. [linkv n σ v]
+    links [σ] into the value [v]. The fuel bounds the depth of calls and of
+    recursive values. At the fuel 0 both give [Bot]. *)
 Fixpoint linkb (n : nat) : nv → body → trace :=
   match n with
   | 0 => fun _ _ => Bot
   | S n' => fun σ b =>
-    link_trace (fun σ' b' => Guard (vl_exp σ') (linkb n' σ' b')) σ (b n')
+    link_trace (fun σ' b' => Guard (vl_exp σ') (linkb n' σ' b')) (linkv n') σ (b n')
+  end
+with linkv (n : nat) : nv → vl → trace :=
+  match n with
+  | 0 => fun _ _ => Bot
+  | S n' => fun σ v =>
+    link_vl (fun σ' b' => Guard (vl_exp σ') (linkb n' σ' b')) (linkv n') σ v
   end.
 
+(** Enter the body [b] with the environment [σ]. The guard keeps [σ]. *)
 Definition call (n : nat) (σ : nv) (b : body) : trace :=
   Guard (vl_exp σ) (linkb n σ b).
 
+(** At the fuel 0, [linkb] gives [Bot]. *)
 Lemma linkb_0 σ b : linkb 0 σ b = Bot.
 Proof. reflexivity. Qed.
 
-Lemma linkb_S n σ b : linkb (S n) σ b = link_trace (call n) σ (b n).
+(** One unit of fuel for [linkb]. *)
+Lemma linkb_S n σ b : linkb (S n) σ b = link_trace (call n) (linkv n) σ (b n).
 Proof. reflexivity. Qed.
 
+(** At the fuel 0, [linkv] gives [Bot]. *)
+Lemma linkv_0 σ v : linkv 0 σ v = Bot.
+Proof. reflexivity. Qed.
+
+(** One unit of fuel for [linkv]. *)
+Lemma linkv_S n σ v : linkv (S n) σ v = link_vl (call n) (linkv n) σ v.
+Proof. reflexivity. Qed.
+
+(** The definition of [call]. *)
 Lemma call_eq n σ b : call n σ b = Guard (vl_exp σ) (linkb n σ b).
 Proof. reflexivity. Qed.
 
-(** The denotation, relative to the unknown environment [Init]. *)
+(** ** The denotation *)
+
+(** The trace of a term at the fuel [n], relative to the unknown environment.
+    [denote_list] is for the arguments of a constructor. [denote_sel] selects
+    the branch of a constructor value. [denote_brs] gives the branches for a
+    shadow. *)
 Fixpoint denote (n : nat) (e : tm) {struct e} : trace :=
   match e with
   | Var x => Ret (vl_sh (Read Init x))
@@ -137,10 +199,11 @@ Fixpoint denote (n : nat) (e : tm) {struct e} : trace :=
     bind (on_mod (fun σ => call n σ (fun m => denote m e2))) (denote n e1)
   | Mt => Ret (vl_exp nv_mt)
   | Bind x e1 e2 =>
+    (* [e1] runs with [x] bound to the anchor 1. Then the anchor is closed. *)
     bind (fun v =>
-      bind (on_mod (fun σ2 => Ret (vl_exp (nv_bd x v σ2))))
-        (call n (nv_bd x v (nv_sh Init)) (fun m => denote m e2)))
-      (denote n e1)
+      bind (on_mod (fun σ2 => Ret (vl_exp (nv_mu x (close_vl 0 1 v) σ2))))
+        (call n (nv_mu x (close_vl 0 1 v) (nv_sh Init)) (fun m => denote m e2)))
+      (killg 1 (call n (nv_an x (F 1) (nv_sh Init)) (fun m => denote m e1)))
   | Cstr c es => denote_list n c es
   | Case e' bs =>
     bind (fun m =>
@@ -175,11 +238,10 @@ with denote_brs (n : nat) (s : shdw) (bs : branches) {struct bs} : brs :=
       (denote_brs n s bs')
   end.
 
+(** The denotation of a term as a body. *)
 Definition den (e : tm) : body := fun n => denote n e.
 
-(** Running a program in an environment: link the environment in. *)
+(** The result of the term [e] in the environment [σ] at the fuel [n]. *)
 Definition run (n : nat) (σ : nv) (e : tm) : option vl := dest (linkb n σ (den e)).
 
-(* From here on [linkb] and [call] are only unfolded through the three
-   equations above. *)
-Global Opaque linkb call.
+Global Opaque linkb linkv call.
