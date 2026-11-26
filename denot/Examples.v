@@ -150,7 +150,7 @@ Eval vm_compute in
               (brcons "O" nil O' (brcons "S" ("p" :: nil) (Var "p") brnil))).
 
 (** The denotation of [x = g (λy. x); ε] holds a recursive value whose body
-    is a call shadow. The anchor of [x] is the index [B 0] under [nv_mu]. In
+    is a call shadow. The anchor of [x] is the index [B 0] under [wvl_mu]. In
     the guards it is the dead anchor [F 0]. *)
 Eval vm_compute in denote 3 (Bind "x" (App (Var "g") (Fn "y" (Var "x"))) Mt).
 

@@ -21,12 +21,15 @@
       constructor value, a branch of a match and the environment of a body. A
       later linking must then resolve each value that a call-by-value run
       computes.
-    - Recursive values. To link into a recursive value, [link_nv] opens it
+    - Weak values. A leaf of a trace is a value, and a weak value is not
+      always a value. Thus [link_wvl] takes the rest of the linking as a
+      function of the linked weak value.
+    - Recursive values. To link into a recursive value, [link_wvl] opens it
       with a fresh anchor, links, and closes it. It kills the anchor in the
       spine.
-    - Fuel. The opened recursive value is not a structural part, so [link_nv]
-      takes its linking as the parameter [lk]. [linkv] gives [lk] by the same
-      fuel as [linkb]. *)
+    - Fuel. The opened recursive value is not a structural part, so
+      [link_wvl] takes its linking as the parameter [lk]. [linkv] gives [lk]
+      by the same fuel as [linkb]. *)
 From Stdlib Require Import Utf8 String Bool Arith List.
 From Denot Require Import Syntax Anchor Domain.
 
@@ -66,9 +69,10 @@ Section link.
 
   Context (σ0 : nv).
 
-  (** Link [σ0] into a shadow, an environment, a value or a list of values.
-      Each leaf of [link_nv] is a module. Each leaf of [link_vls c] is a
-      constructor value of [c]. *)
+  (** Link [σ0] into a shadow, an environment, a weak value, a value or a
+      list of values. Each leaf of [link_nv] is a module. Each leaf of
+      [link_vls c] is a constructor value of [c]. [link_wvl w k] continues
+      with [k] at the linked weak value. *)
   Fixpoint link_shdw (s : shdw) : trace :=
     match s with
     | Init => Ret (vl_exp σ0)
@@ -80,19 +84,19 @@ Section link.
     match σ with
     | nv_mt => Ret (vl_exp nv_mt)
     | nv_sh s => bind (on_mod (fun σ' => Ret (vl_exp σ'))) (link_shdw s)
-    | nv_bd x v σ' =>
-      bind (fun v' =>
-        bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x v' σ'')))) (link_nv σ'))
-        (link_vl v)
-    | nv_mu x w σ' =>
+    | nv_bd x w σ' =>
+      link_wvl w (fun w' =>
+        bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x w' σ'')))) (link_nv σ'))
+    end
+  with link_wvl (w : wvl) (k : wvl → trace) : trace :=
+    match w with
+    | wvl_v v => bind (fun v' => k (wvl_v v')) (link_vl v)
+    | wvl_mu v =>
       (* Open with a fresh anchor, link, and close. Kill the anchor in the spine. *)
-      let ℓ := fresh σ0 w in
-      bind (fun w' =>
-        bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w') σ''))))
-          (link_nv σ'))
-        (killg ℓ (lk σ0 (open_vl 0 ℓ w)))
-    | nv_an x a σ' =>
-      bind (on_env (fun σ'' => Ret (vl_exp (nv_an x a σ'')))) (link_nv σ')
+      let ℓ := fresh σ0 v in
+      bind (fun v' => k (wvl_mu (close_vl 0 ℓ v')))
+        (killg ℓ (lk σ0 (open_vl 0 ℓ v)))
+    | wvl_an _ => k w
     end
   with link_vl (v : vl) : trace :=
     match v with
@@ -201,9 +205,10 @@ Fixpoint denote (n : nat) (e : tm) {struct e} : trace :=
   | Bind x e1 e2 =>
     (* [e1] runs with [x] bound to the anchor 1. Then the anchor is closed. *)
     bind (fun v =>
-      bind (on_mod (fun σ2 => Ret (vl_exp (nv_mu x (close_vl 0 1 v) σ2))))
-        (call n (nv_mu x (close_vl 0 1 v) (nv_sh Init)) (fun m => denote m e2)))
-      (killg 1 (call n (nv_an x (F 1) (nv_sh Init)) (fun m => denote m e1)))
+      bind (on_mod (fun σ2 => Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 1 v)) σ2))))
+        (call n (nv_bd x (wvl_mu (close_vl 0 1 v)) (nv_sh Init))
+           (fun m => denote m e2)))
+      (killg 1 (call n (nv_bd x (wvl_an (F 1)) (nv_sh Init)) (fun m => denote m e1)))
   | Cstr c es => denote_list n c es
   | Case e' bs =>
     bind (fun m =>

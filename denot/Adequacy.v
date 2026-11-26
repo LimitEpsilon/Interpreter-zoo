@@ -189,11 +189,12 @@ Section closed.
       recursive value resolves the value before the close, then the rest. The
       costs add. *)
   Lemma mu_env_inv m x v σr u ℓ (Wv : wf_vl v) (Z : ℓ ≠ 0) (N : nf_nv ℓ Σ)
-    (D : dest (link_nv (call m) (linkv m) Σ (nv_mu x (close_vl 0 ℓ v) σr)) = Some u) :
+    (D : dest (link_nv (call m) (linkv m) Σ (nv_bd x (wvl_mu (close_vl 0 ℓ v)) σr)) =
+         Some u) :
     ∃ v' σr', dest (linkv m Σ v) = Some v' ∧
       dest (link_nv (call m) (linkv m) Σ σr) = Some (vl_exp σr') ∧
-      u = vl_exp (nv_mu x (close_vl 0 ℓ v') σr') ∧
-      cost (link_nv (call m) (linkv m) Σ (nv_mu x (close_vl 0 ℓ v) σr)) =
+      u = vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v')) σr') ∧
+      cost (link_nv (call m) (linkv m) Σ (nv_bd x (wvl_mu (close_vl 0 ℓ v)) σr)) =
       cost (linkv m Σ v) + cost (link_nv (call m) (linkv m) Σ σr).
   Proof.
     assert (wfk_vl 1 (close_vl 0 ℓ v)) as Wc by (apply wf_close; auto).
@@ -211,8 +212,8 @@ Section closed.
   Lemma mu_env_intro m x v σr v' σr' ℓ (Wv : wf_vl v) (Z : ℓ ≠ 0) (N : nf_nv ℓ Σ)
     (D1 : dest (linkv m Σ v) = Some v')
     (D2 : dest (link_nv (call m) (linkv m) Σ σr) = Some (vl_exp σr')) :
-    dest (link_nv (call m) (linkv m) Σ (nv_mu x (close_vl 0 ℓ v) σr)) =
-    Some (vl_exp (nv_mu x (close_vl 0 ℓ v') σr')).
+    dest (link_nv (call m) (linkv m) Σ (nv_bd x (wvl_mu (close_vl 0 ℓ v)) σr)) =
+    Some (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v')) σr')).
   Proof.
     assert (wfk_vl 1 (close_vl 0 ℓ v)) as Wc by (apply wf_close; auto).
     rewrite (linkn_mu m Σ x _ σr ℓ HΣ Wc Z N (nf_close_self ℓ v 0)).
@@ -224,17 +225,19 @@ Section closed.
   (** The last step of a binding. A finished linking into the module that the
       binding gives resolves the value of [e1] and the module of [e2]. *)
   Lemma bind_mu_inv m x v1r w2 w ℓ (Wv : wf_vl v1r) (Z : ℓ ≠ 0) (N : nf_nv ℓ Σ)
-    (D : dest (O m (on_mod (fun σ2 => Ret (vl_exp (nv_mu x (close_vl 0 ℓ v1r) σ2)))
+    (D : dest (O m (on_mod (fun σ2 =>
+                              Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v1r)) σ2)))
                       w2)) = Some w) :
     ∃ v1' r2,
       dest (linkv m Σ v1r) = Some v1' ∧
       dest (link_vl (call m) (linkv m) Σ w2) = Some r2 ∧
       cost (link_vl (call m) (linkv m) Σ w2)
-        ≤ cost (O m (on_mod (fun σ2 => Ret (vl_exp (nv_mu x (close_vl 0 ℓ v1r) σ2)))
+        ≤ cost (O m (on_mod (fun σ2 =>
+                               Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v1r)) σ2)))
                        w2)) ∧
       (∀ v2, r2 = lift v2 →
          ∃ ρ2, v2 = r_exp ρ2 ∧
-               w = vl_exp (nv_mu x (close_vl 0 ℓ v1') (lift_env ρ2))).
+               w = vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v1')) (lift_env ρ2))).
   Proof.
     destruct w2 as [σ2|s2|?|?]; try (simpl in D; discriminate).
     - cbn [on_mod] in D |- *. rewrite L_Ret in D |- *.
@@ -380,20 +383,20 @@ Section fwd.
   (** The forward direction for a binding. *)
   Lemma fwd_bind x e1 e2 ρ v1 ρ2 (Wρ : wf_nv (lift_env ρ)) :
     let ℓ := S (rsup_env ρ) in
-    ev N e1 (ran x (F ℓ) ρ) = Some v1 →
-    ev N e2 (rmu x (rclose 0 ℓ v1) ρ) = Some (r_exp ρ2) →
+    ev N e1 (rcons x (rw_an (F ℓ)) ρ) = Some v1 →
+    ev N e2 (rcons x (rw_mu (rclose 0 ℓ v1)) ρ) = Some (r_exp ρ2) →
     evd (fun m => link_trace (call m) (linkv m) (lift_env ρ) (denote m (Bind x e1 e2)))
-        (lift (r_exp (rmu x (rclose 0 ℓ v1) ρ2))).
+        (lift (r_exp (rcons x (rw_mu (rclose 0 ℓ v1)) ρ2))).
   Proof.
     intros ℓ E1 E2.
     assert (ℓ ≠ 0) as Z by (unfold ℓ; lia).
     pose proof (fresh_lift ρ) as Nρ. fold ℓ in Nρ.
     (* [e1] runs with [x] bound to the anchor. *)
-    set (σ1 := nv_an x (F ℓ) (nv_sh Init)).
+    set (σ1 := nv_bd x (wvl_an (F ℓ)) (nv_sh Init)).
     assert (wf_nv σ1) as Wσ1 by (simpl; auto).
-    assert (wf_nv (lift_env (ran x (F ℓ) ρ))) as Wρ1 by (simpl; auto).
+    assert (wf_nv (lift_env (rcons x (rw_an (F ℓ)) ρ))) as Wρ1 by (simpl; auto).
     assert (dest (link_nv (call 0) (linkv 0) (lift_env ρ) σ1) =
-            Some (vl_exp (lift_env (ran x (F ℓ) ρ)))) as R1 by reflexivity.
+            Some (vl_exp (lift_env (rcons x (rw_an (F ℓ)) ρ)))) as R1 by reflexivity.
     destruct (call_fwd ρ Wρ σ1 _ e1 _ 0 Wσ1 R1 (IHN _ _ _ Wρ1 E1)) as (m1 & H1).
     pose proof (H1 m1 (Nat.le_refl _)) as D1.
     apply L_split in D1 as (v1r & G1 & G2 & _).
@@ -402,11 +405,11 @@ Section fwd.
     assert (wf_vl (lift v1)) as Wv1 by (eapply wf_Lvl; [exact Wρ|exact Wv1r|exact G2]).
     rewrite <- linkv_S in G2.
     (* [e2] runs with [x] bound to the recursive value. *)
-    set (σ2 := nv_mu x (close_vl 0 ℓ v1r) (nv_sh Init)).
+    set (σ2 := nv_bd x (wvl_mu (close_vl 0 ℓ v1r)) (nv_sh Init)).
     assert (wf_nv σ2) as Wσ2.
     { simpl. split; auto. apply wf_close; auto. }
     assert (dest (link_nv (call (S m1)) (linkv (S m1)) (lift_env ρ) σ2) =
-            Some (vl_exp (lift_env (rmu x (rclose 0 ℓ v1) ρ)))) as R2.
+            Some (vl_exp (lift_env (rcons x (rw_mu (rclose 0 ℓ v1)) ρ)))) as R2.
     { simpl lift_env. rewrite (proj1 lift_close).
       apply mu_env_intro; auto. }
     pose proof (res_wf ρ Wρ _ _ _ Wσ2 R2) as Wρ2.
@@ -478,9 +481,9 @@ Section fwd.
     - (* Mt *)
       inversion E; subst. exists 0. intros. reflexivity.
     - (* Bind *)
-      destruct (ev N e1 (ran x (F (S (rsup_env ρ))) ρ)) as [v1|] eqn:E1;
+      destruct (ev N e1 (rcons x (rw_an (F (S (rsup_env ρ)))) ρ)) as [v1|] eqn:E1;
         try discriminate.
-      destruct (ev N e2 (rmu x (rclose 0 (S (rsup_env ρ)) v1) ρ))
+      destruct (ev N e2 (rcons x (rw_mu (rclose 0 (S (rsup_env ρ)) v1)) ρ))
         as [[ρ2| |]|] eqn:E2; try discriminate.
       inversion E; subst v; clear E.
       exact (fwd_bind x e1 e2 ρ v1 ρ2 Wρ E1 E2).
@@ -647,7 +650,7 @@ Section bwd.
     set (ℓ := S (rsup_env ρ)).
     assert (ℓ ≠ 0) as Z by (unfold ℓ; lia).
     pose proof (fresh_lift ρ) as Nρ. fold ℓ in Nρ.
-    set (σ1 := nv_an x (F ℓ) (nv_sh Init)).
+    set (σ1 := nv_bd x (wvl_an (F ℓ)) (nv_sh Init)).
     assert (wf_nv σ1) as Wσ1 by (simpl; auto).
     assert (wf_tr (call m σ1 (den e1))) as Wc1 by (apply wf_call; auto; apply wfb_den).
     rewrite (denote_bind m x e1 e2 ℓ Z) in D, C. fold σ1 in D, C.
@@ -656,7 +659,7 @@ Section bwd.
     rewrite linkn_tr_killg in D1, C1; auto.
     rewrite dest_killg in D1. rewrite cost_killg in C1.
     assert (wf_vl v1r) as Wv1r by (eapply wf_Ltr; [exact Wρ|exact Wc1|exact D1]).
-    set (σ2 := nv_mu x (close_vl 0 ℓ v1r) (nv_sh Init)) in *.
+    set (σ2 := nv_bd x (wvl_mu (close_vl 0 ℓ v1r)) (nv_sh Init)) in *.
     assert (wf_nv σ2) as Wσ2.
     { simpl. split; auto. apply wf_close; auto. }
     assert (wf_tr (call m σ2 (den e2))) as Wc2 by (apply wf_call; auto; apply wfb_den).
@@ -676,7 +679,8 @@ Section bwd.
     { rewrite linkv_S in D7 |- *.
       rewrite (up_vl mp (S mp) ltac:(lia) (lift_env ρ) Wρ v1r v1' Wv1r D7). auto. }
     destruct (L_join _ _ _ _ _ _ D1 D9) as [D10 C10].
-    destruct (enter ρ (S mp) σ1 (ran x (F ℓ) ρ) e1 v1' Wρ Wσ1 D10) as (N1 & v1 & E1 & ->).
+    destruct (enter ρ (S mp) σ1 (rcons x (rw_an (F ℓ)) ρ) e1 v1' Wρ Wσ1 D10)
+      as (N1 & v1 & E1 & ->).
     { rewrite C10, C9. rewrite C1, C2 in C. subst σ2. lia. }
     { intros σ' R. simpl in R. inversion R. reflexivity. }
     (* The trace of [e2]. *)
@@ -684,13 +688,13 @@ Section bwd.
       as (v1'' & r2 & D11 & D12 & C12 & H).
     rewrite D7 in D11. inversion D11; subst v1''; clear D11.
     destruct (L_join _ _ _ _ _ _ D3 D12) as [D13 C13].
-    destruct (enter ρ (S mp) σ2 (rmu x (rclose 0 ℓ v1) ρ) e2 r2 Wρ Wσ2 D13)
+    destruct (enter ρ (S mp) σ2 (rcons x (rw_mu (rclose 0 ℓ v1)) ρ) e2 r2 Wρ Wσ2 D13)
       as (N2 & v2 & E2 & Hr2).
     { rewrite C13. rewrite C1, C2 in C. lia. }
     { intros σ' R. rewrite D5 in R. rewrite Eu in R. inversion R.
       simpl. rewrite (proj1 lift_close). reflexivity. }
     destruct (H v2 Hr2) as (ρ2 & -> & ->).
-    exists (S (Nat.max N1 N2)), (r_exp (rmu x (rclose 0 ℓ v1) ρ2)). split.
+    exists (S (Nat.max N1 N2)), (r_exp (rcons x (rw_mu (rclose 0 ℓ v1)) ρ2)). split.
     - simpl. fold ℓ. rew_ev E1. rew_ev E2. reflexivity.
     - simpl. rewrite (proj1 lift_close). reflexivity.
   Qed.

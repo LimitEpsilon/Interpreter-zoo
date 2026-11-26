@@ -246,7 +246,7 @@ Section LL.
   Proof. apply env_comm. reflexivity. Qed.
 
   (** [env_comm] for an environment behind an anchor. *)
-  Lemma an_comm m x a : Kcomm m (on_env (fun σ2 => Ret (vl_exp (nv_an x a σ2)))).
+  Lemma an_comm m x a : Kcomm m (on_env (fun σ2 => Ret (vl_exp (nv_bd x (wvl_an a) σ2)))).
   Proof. apply env_comm. reflexivity. Qed.
 
   (** One step of direction (a) for a trace [bind K Tin], from the statement
@@ -393,7 +393,7 @@ Section LL.
       - (* nv_sh *)
         intros s IH σ σ' m r Ws Wσ R D. simpl in D |- *.
         eapply step1; eauto using mod_comm. apply (WL σ Wσ); auto.
-      - (* nv_bd *)
+      - (* wvl_v *)
         intros x v σ1 IHv IHσ1 σ σ' m r [Wv Wσ1] Wσ R D. simpl in D |- *.
         apply L_bind in D as (v' & D1 & D2 & C1).
         apply L_bind in D2 as (w & D3 & D4 & C2).
@@ -417,7 +417,7 @@ Section LL.
             (w := vl_exp σ2'); [exact IHσ1|].
           apply evc_const; simpl; auto.
         + rewrite C1, C2, C3, C4, C9, C10. simpl. lia.
-      - (* nv_mu *)
+      - (* wvl_mu *)
         intros x w σ1 _ IHσ1 σ σ' m r [Ww Wσ1] Wσ R D.
         assert (wf_nv σ') as Wσ' by (eapply wf_res; eauto).
         destruct (pick_fresh σ σ' w) as (ℓ & Z & F0 & F1 & F2 & Fw).
@@ -461,15 +461,17 @@ Section LL.
           * apply evc_bind with
               (F := fun m2 => killg ℓ (linkv m2 σ' (open_vl 0 ℓ w)))
               (K := fun m2 w' =>
-                 bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w') σ''))))
+                 bind (on_env (fun σ'' =>
+                         Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ w')) σ''))))
                    (link_nv (call m2) (linkv m2) σ' σ1)) (w := w2);
               [apply evc_killg; exact E1|].
             apply evc_bind with
-              (K := fun _ => on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w2) σ''))))
+              (K := fun _ => on_env (fun σ'' =>
+                      Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ w2)) σ''))))
               (w := vl_exp σ2'); [exact E2|].
             apply evc_const; simpl; auto.
         + rewrite C1, C2, C3, C4, C9, C10. simpl. lia.
-      - (* nv_an *)
+      - (* wvl_an *)
         intros x a σ1 IH σ σ' m r [Wa Wσ1] Wσ R D. simpl in D |- *.
         eapply step1; eauto using an_comm. apply (WL σ Wσ); auto.
       - (* vl_exp *) intros σ1 IH. exact IH.
@@ -724,7 +726,7 @@ Section LL.
 
   (** [env_comm_b] for an environment behind an anchor. *)
   Lemma an_comm_b x a :
-    Kcomm_b is_exp (on_env (fun σ2 => Ret (vl_exp (nv_an x a σ2)))).
+    Kcomm_b is_exp (on_env (fun σ2 => Ret (vl_exp (nv_bd x (wvl_an a) σ2)))).
   Proof. apply env_comm_b. reflexivity. Qed.
 
   (** One step of direction (b) for a trace [bind K (Tin n)], from the
@@ -880,7 +882,7 @@ Section LL.
         + intros n. apply (WL n σ Wσ); auto.
         + intros n n' LE. apply (le_in n n' LE σ Wσ); auto.
         + intros; apply leaves_True.
-      - (* nv_bd *)
+      - (* wvl_v *)
         intros x v σ1 IHv IHσ1 σ σ' r [Wv Wσ1] Wσ R D. simpl in D |- *.
         apply dest_bind_inv in D as (v'' & D1 & D2).
         apply dest_bind_inv in D2 as (mσ & D3 & D4).
@@ -900,7 +902,7 @@ Section LL.
         simpl. rewrite ?L_Ret. simpl.
         eapply dest_bind_intro; [exact F2|].
         eapply dest_bind_intro; [exact G2|]. reflexivity.
-      - (* nv_mu *)
+      - (* wvl_mu *)
         intros x w σ1 _ IHσ1 σ σ' r [Ww Wσ1] Wσ R D.
         assert (wf_nv σ') as Wσ' by (eapply wf_res; eauto).
         destruct (pick_fresh σ σ' w) as (ℓ & Z & F0 & F1 & F2 & Fw).
@@ -941,7 +943,7 @@ Section LL.
         eapply dest_bind_intro.
         { rewrite dest_killg, linkv_S. exact G2. }
         eapply dest_bind_intro; [exact G4|]. reflexivity.
-      - (* nv_an *)
+      - (* wvl_an *)
         intros x a σ1 IH σ σ' r [Wa Wσ1] Wσ R D. simpl in D |- *.
         apply dest_bind_inv in D as (r' & D1 & D2).
         eapply step1_b with (P := is_exp) (r' := r'); eauto.

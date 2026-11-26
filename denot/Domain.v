@@ -1,32 +1,43 @@
 (** * Semantic domain
 
-    This file defines shadows, environments, values and traces, and the
-    operations on them. Each type is inductive. A closure holds the
+    This file defines shadows, environments, weak values, values and traces,
+    and the operations on them. Each type is inductive. A closure holds the
     denotation of its body, that is one finite trace for each fuel.
+
+    An entry of an environment holds a weak value. A weak value is a value, a
+    recursive value or an anchor. Only a value is the result of a term.
 
     Open, close and unroll are structural recursions. They do not change the
     body of a closure, because a body has no anchor of a binding around it.
 
     ** Main definitions
 
-    - [shdw], [nv], [vl], [trace]: shadows, environments, values and traces.
+    - [shdw], [nv], [wvl], [vl], [trace]: shadows, environments, weak
+      values, values and traces.
     - [am_vl]: apply a function to each anchor of a value. Open, close and
       rename are instances.
     - [su_vl]: replace anchors by recursive values. [unroll] is an instance.
     - [fresh]: a name that is fresh for an environment and a value.
+    - [force]: the value of a weak value.
     - [read]: the value of a variable in an environment.
     - [bind]: put a trace at each leaf of a trace.
     - [tmap], [ren_tr], [killg]: change the values of a trace.
     - [dest]: the result of a finished trace.
     - [val_mutind], [tr_mutind]: induction on values only, and on traces
-      only. *)
+      only.
+
+    ** Notes
+
+    - [wvl_v] is a coercion. Thus [nv_bd x v σ] is the entry of the value
+      [v]. *)
 From Stdlib Require Import Utf8 String Bool Arith List.
 From Denot Require Import Syntax Anchor.
 
-(** The 6 mutual types of the domain.
+(** The 7 mutual types of the domain.
     - A shadow is a computation that waits for the unknown environment.
     - An environment is a list of entries, or a shadow that stands for a
-      module.
+      module. An entry binds a variable to a weak value.
+    - A weak value is a value, a recursive value or an anchor.
     - A value is a module, a shadow, a closure or a constructor value.
     - A trace is a finite tree. Its leaves are values. *)
 Inductive shdw :=
@@ -37,9 +48,11 @@ Inductive shdw :=
 with nv :=
   | nv_mt                                  (* • *)
   | nv_sh (s : shdw)                       (* a module that is a shadow *)
-  | nv_bd (x : var) (v : vl) (σ : nv)      (* x ↦ v *)
-  | nv_mu (x : var) (v : vl) (σ : nv)      (* x ↦ μ.v, a recursive value *)
-  | nv_an (x : var) (a : anc) (σ : nv)     (* x ↦ an anchor *)
+  | nv_bd (x : var) (w : wvl) (σ : nv)     (* the entry x ↦ w *)
+with wvl :=
+  | wvl_v (v : vl)                         (* a value *)
+  | wvl_mu (v : vl)                        (* μ.v, a recursive value *)
+  | wvl_an (a : anc)                       (* an anchor *)
 with vl :=
   | vl_exp (σ : nv)                        (* a module *)
   | vl_sh (s : shdw)
@@ -59,12 +72,16 @@ with brs :=
 
 Scheme shdw_ind' := Induction for shdw Sort Prop
   with nv_ind' := Induction for nv Sort Prop
+  with wvl_ind' := Induction for wvl Sort Prop
   with vl_ind' := Induction for vl Sort Prop
   with vls_ind' := Induction for vls Sort Prop
   with trace_ind' := Induction for trace Sort Prop
   with brs_ind' := Induction for brs Sort Prop.
 Combined Scheme dom_mutind from
-  shdw_ind', nv_ind', vl_ind', vls_ind', trace_ind', brs_ind'.
+  shdw_ind', nv_ind', wvl_ind', vl_ind', vls_ind', trace_ind', brs_ind'.
+
+(** A value is a weak value. *)
+Coercion wvl_v : vl >-> wvl.
 
 (** A body, that is one trace for each fuel. *)
 Definition body := nat → trace.
@@ -84,9 +101,13 @@ with am_nv (f : nat → anc → anc) (k : nat) (σ : nv) : nv :=
   match σ with
   | nv_mt => nv_mt
   | nv_sh s => nv_sh (am_shdw f k s)
-  | nv_bd x v σ' => nv_bd x (am_vl f k v) (am_nv f k σ')
-  | nv_mu x v σ' => nv_mu x (am_vl f (S k) v) (am_nv f k σ')
-  | nv_an x a σ' => nv_an x (f k a) (am_nv f k σ')
+  | nv_bd x w σ' => nv_bd x (am_wvl f k w) (am_nv f k σ')
+  end
+with am_wvl (f : nat → anc → anc) (k : nat) (w : wvl) : wvl :=
+  match w with
+  | wvl_v v => wvl_v (am_vl f k v)
+  | wvl_mu v => wvl_mu (am_vl f (S k) v)
+  | wvl_an a => wvl_an (f k a)
   end
 with am_vl (f : nat → anc → anc) (k : nat) (v : vl) : vl :=
   match v with
@@ -117,11 +138,12 @@ Notation close_vl i ℓ := (am_vl (fclose ℓ) i) (only parsing).
 Notation close_vls i ℓ := (am_vls (fclose ℓ) i) (only parsing).
 Notation ren_shdw ξ := (am_shdw (fren ξ) 0) (only parsing).
 Notation ren_nv ξ := (am_nv (fren ξ) 0) (only parsing).
+Notation ren_wvl ξ := (am_wvl (fren ξ) 0) (only parsing).
 Notation ren_vl ξ := (am_vl (fren ξ) 0) (only parsing).
 Notation ren_vls ξ := (am_vls (fren ξ) 0) (only parsing).
 
-(** Replace each entry whose anchor [g] selects by a recursive value. An
-    entry that [g] does not select stays. *)
+(** Replace each anchor that [g] selects by a recursive value. An anchor that
+    [g] does not select stays. *)
 Fixpoint su_shdw (g : nat → anc → option vl) (k : nat) (s : shdw) : shdw :=
   match s with
   | Init => Init
@@ -133,13 +155,13 @@ with su_nv (g : nat → anc → option vl) (k : nat) (σ : nv) : nv :=
   match σ with
   | nv_mt => nv_mt
   | nv_sh s => nv_sh (su_shdw g k s)
-  | nv_bd x v σ' => nv_bd x (su_vl g k v) (su_nv g k σ')
-  | nv_mu x v σ' => nv_mu x (su_vl g (S k) v) (su_nv g k σ')
-  | nv_an x a σ' =>
-    match g k a with
-    | Some u => nv_mu x u (su_nv g k σ')
-    | None => nv_an x a (su_nv g k σ')
-    end
+  | nv_bd x w σ' => nv_bd x (su_wvl g k w) (su_nv g k σ')
+  end
+with su_wvl (g : nat → anc → option vl) (k : nat) (w : wvl) : wvl :=
+  match w with
+  | wvl_v v => wvl_v (su_vl g k v)
+  | wvl_mu v => wvl_mu (su_vl g (S k) v)
+  | wvl_an a => match g k a with Some u => wvl_mu u | None => w end
   end
 with su_vl (g : nat → anc → option vl) (k : nat) (v : vl) : vl :=
   match v with
@@ -178,9 +200,13 @@ with sup_nv (σ : nv) : nat :=
   match σ with
   | nv_mt => 0
   | nv_sh s => sup_shdw s
-  | nv_bd _ v σ' => Nat.max (sup_vl v) (sup_nv σ')
-  | nv_mu _ v σ' => Nat.max (sup_vl v) (sup_nv σ')
-  | nv_an _ a σ' => Nat.max (match a with F ℓ => ℓ | B _ => 0 end) (sup_nv σ')
+  | nv_bd _ w σ' => Nat.max (sup_wvl w) (sup_nv σ')
+  end
+with sup_wvl (w : wvl) : nat :=
+  match w with
+  | wvl_v v => sup_vl v
+  | wvl_mu v => sup_vl v
+  | wvl_an a => match a with F ℓ => ℓ | B _ => 0 end
   end
 with sup_vl (v : vl) : nat :=
   match v with
@@ -201,15 +227,22 @@ Definition fresh (σ : nv) (v : vl) : loc := S (Nat.max (sup_nv σ) (sup_vl v)).
 
 (** ** Environments *)
 
-(** The value of the variable [x]. A read of a recursive value unrolls it. A
-    read of an anchor gives no value. *)
+(** The value of a weak value. A value gives itself. A recursive value gives
+    its unrolling. An anchor gives no value. *)
+Definition force (w : wvl) : option vl :=
+  match w with
+  | wvl_v v => Some v
+  | wvl_mu v => Some (unroll v)
+  | wvl_an _ => None
+  end.
+
+(** The value of the variable [x], that is the value of the weak value of the
+    first entry for [x]. A shadow gives a read shadow. *)
 Fixpoint read (x : var) (σ : nv) : option vl :=
   match σ with
   | nv_mt => None
   | nv_sh s => Some (vl_sh (Read s x))
-  | nv_bd x' v σ' => if String.eqb x x' then Some v else read x σ'
-  | nv_mu x' v σ' => if String.eqb x x' then Some (unroll v) else read x σ'
-  | nv_an x' _ σ' => if String.eqb x x' then None else read x σ'
+  | nv_bd x' w σ' => if String.eqb x x' then force w else read x σ'
   end.
 
 (** Value number [i] of a list of values. *)
@@ -302,7 +335,8 @@ Definition on_cstr (k : cstr → vls → trace) (m : vl) : trace :=
 
 (** ** Induction principles *)
 
-(** Mutual induction on shadows, environments, values and lists of values. *)
+(** Mutual induction on shadows, environments, values and lists of values.
+    The cases [Hbd], [Hmu] and [Han] are the 3 forms of an entry. *)
 Lemma val_mutind (P : shdw → Prop) (P0 : nv → Prop) (P1 : vl → Prop) (P2 : vls → Prop)
   (HInit : P Init)
   (HRead : ∀ s x, P s → P (Read s x))
@@ -310,9 +344,9 @@ Lemma val_mutind (P : shdw → Prop) (P0 : nv → Prop) (P1 : vl → Prop) (P2 :
   (HDstr : ∀ s c i, P s → P (Dstr s c i))
   (Hmt : P0 nv_mt)
   (Hsh : ∀ s, P s → P0 (nv_sh s))
-  (Hbd : ∀ x v σ, P1 v → P0 σ → P0 (nv_bd x v σ))
-  (Hmu : ∀ x v σ, P1 v → P0 σ → P0 (nv_mu x v σ))
-  (Han : ∀ x a σ, P0 σ → P0 (nv_an x a σ))
+  (Hbd : ∀ x v σ, P1 v → P0 σ → P0 (nv_bd x (wvl_v v) σ))
+  (Hmu : ∀ x v σ, P1 v → P0 σ → P0 (nv_bd x (wvl_mu v) σ))
+  (Han : ∀ x a σ, P0 σ → P0 (nv_bd x (wvl_an a) σ))
   (Hexp : ∀ σ, P0 σ → P1 (vl_exp σ))
   (Hvsh : ∀ s, P s → P1 (vl_sh s))
   (Hclos : ∀ x b σ, P0 σ → P1 (vl_clos x b σ))
@@ -321,8 +355,10 @@ Lemma val_mutind (P : shdw → Prop) (P0 : nv → Prop) (P1 : vl → Prop) (P2 :
   (Hcons : ∀ v vs, P1 v → P2 vs → P2 (vcons v vs)) :
   (∀ s, P s) ∧ (∀ σ, P0 σ) ∧ (∀ v, P1 v) ∧ (∀ vs, P2 vs).
 Proof.
-  pose proof (dom_mutind P P0 P1 P2 (fun _ => True) (fun _ => True)) as H.
-  assert ((∀ s, P s) ∧ (∀ σ, P0 σ) ∧ (∀ v, P1 v) ∧ (∀ vs, P2 vs) ∧
+  pose proof (dom_mutind P P0 (fun w => ∀ x σ, P0 σ → P0 (nv_bd x w σ)) P1 P2
+                (fun _ => True) (fun _ => True)) as H.
+  assert ((∀ s, P s) ∧ (∀ σ, P0 σ) ∧
+          (∀ w x σ, P0 σ → P0 (nv_bd x w σ)) ∧ (∀ v, P1 v) ∧ (∀ vs, P2 vs) ∧
           (∀ t : trace, True) ∧ (∀ bs : brs, True)) as H'.
   { apply H; auto. }
   intuition.
@@ -339,9 +375,9 @@ Lemma tr_mutind (P : trace → Prop) (Q : brs → Prop)
   (∀ t, P t) ∧ (∀ bs, Q bs).
 Proof.
   pose proof (dom_mutind (fun _ => True) (fun _ => True) (fun _ => True)
-                (fun _ => True) P Q) as H.
-  assert ((∀ s : shdw, True) ∧ (∀ σ : nv, True) ∧ (∀ v : vl, True) ∧
-          (∀ vs : vls, True) ∧ (∀ t, P t) ∧ (∀ bs, Q bs)) as H'.
+                (fun _ => True) (fun _ => True) P Q) as H.
+  assert ((∀ s : shdw, True) ∧ (∀ σ : nv, True) ∧ (∀ w : wvl, True) ∧
+          (∀ v : vl, True) ∧ (∀ vs : vls, True) ∧ (∀ t, P t) ∧ (∀ bs, Q bs)) as H'.
   { apply H; auto. }
   intuition.
 Qed.

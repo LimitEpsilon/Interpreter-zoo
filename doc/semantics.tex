@@ -39,7 +39,8 @@ Thus a binding defines a recursive function, a recursive functor, or mutually re
   \begin{tabular}{rrcl}
     Anchor      & $a$      & $\in$ & $\Anchor\Coloneqq\bidx{i}$ $\vbar$ $\ell$                                              \\
     Shadow      & $S$      & $\in$ & $\Event\Coloneqq\InitE$ $\vbar$ $\ReadE(S,x)$ $\vbar$ $\CallE(S,v)$ $\vbar$ $\FldE(S,C,i)$ \\
-    Environment & $\sigma$ & $\in$ & $\Ctx\Coloneqq\bullet$ $\vbar$ $[S]$ $\vbar$ $(x,v)\cons\sigma$ $\vbar$ $(x,\muval{v})\cons\sigma$ $\vbar$ $(x,a)\cons\sigma$ \\
+    Environment & $\sigma$ & $\in$ & $\Ctx\Coloneqq\bullet$ $\vbar$ $[S]$ $\vbar$ $(x,\omega)\cons\sigma$                       \\
+    Weak value  & $\omega$ & $\in$ & $\Walue\Coloneqq v$ $\vbar$ $\muval{v}$ $\vbar$ $a$                                       \\
     Value       & $v$      & $\in$ & $\Value\Coloneqq\sigma$ $\vbar$ $S$ $\vbar$ $\langle\lambda x.b,\sigma\rangle$ $\vbar$ $C\:\overline{v}$ \\
     Body        & $b$      & $\in$ & $\Body\triangleq\mathbb{N}\rightarrow\Trace$                                            \\
     Trace       & $t$      & $\in$ & $\Trace\Coloneqq\bot$ $\vbar$ $v$ $\vbar$ $\guardt{v}{t}$ $\vbar$ $\MatchT\:S\:\{\overline{C/n\Mapsto t}\}$
@@ -65,14 +66,17 @@ The guard $\guardt{v}{t}$ says that linking must resolve $v$ before $t$ counts.
 A branch node has one trace for each branch of a match on the shadow $S$.
 The spine of a trace is its guards and its scrutinees, without its leaves.
 
-An entry of an environment binds a variable to a value, to a recursive value $\muval{v}$, or to an anchor.
+An entry $(x,\omega)$ of an environment binds the variable $x$ to the weak value $\omega$.
+A weak value is a value, a recursive value $\muval{v}$ or an anchor.
+Only a value is the result of a term.
+
 An anchor is the placeholder for the value of a binding while the right side of the binding runs.
 Anchors are locally nameless.
 A recursive value around an index binds the index, and a name is free.
 The index $\bidx{0}$ in $v$ is the anchor of the recursive value $\muval{v}$.
 The name $\dead$ is the dead anchor.
 
-\subsection{Operations on Anchors}
+\subsection{Operations on Anchors}\label{sec:ops}
 
 The operations of this section are structural recursions on values.
 They do not change the body of a closure.
@@ -81,8 +85,8 @@ They do not change the body of a closure.
   \item Open: $\openloc{\ell}{v}$ is $v$ with the index $\bidx{0}$ made the name $\ell$.
   \item Close: $\closeloc{\ell}{v}$ is $v$ with the name $\ell$ made the index $\bidx{0}$.
   \item Rename: $\xi(v)$ is $v$ with each name $\ell$ made $\xi(\ell)$, for a function $\xi$ on names.
-  \item Replace: $\repl{v}{u}{\ell}$ is $v$ with each entry $(x,\ell)$ made $(x,\muval{u})$.
-  \item Unroll: $\unroll(\muval{v})$ is $v$ with each entry $(x,\bidx{0})$ made $(x,\muval{v})$.
+  \item Replace: $\repl{v}{u}{\ell}$ is $v$ with each weak value $\ell$ made $\muval{u}$.
+  \item Unroll: $\unroll(\muval{v})$ is $v$ with each weak value $\bidx{0}$ made $\muval{v}$.
 \end{itemize}
 
 A name is fresh for a value when no entry of the value holds it.
@@ -90,14 +94,19 @@ $\fresh(\sigma,v)$ is a name that is fresh for $\sigma$ and for $v$, and that is
 A value is locally closed when a recursive value around each index binds the index.
 A value is well formed when it is locally closed and each body of a closure is the denotation of a term.
 
+The value $\forcef(\omega)$ of a weak value is a partial function:
+\begin{alignat*}{2}
+  \forcef(v)          & \triangleq v                 & \qquad \forcef(\muval{v}) & \triangleq\unroll(\muval{v})
+\end{alignat*}
+The value of an anchor is not defined.
+
 The read of a variable in an environment is a partial function:
 \begin{alignat*}{2}
   [S](x)                         & \triangleq\ReadE(S,x)          &                                \\
-  ((x,v)\cons\sigma)(x)          & \triangleq v                   &                                \\
-  ((x,\muval{v})\cons\sigma)(x)  & \triangleq\unroll(\muval{v})   &                                \\
-  ((y,\cdot)\cons\sigma)(x)      & \triangleq\sigma(x)            & \qquad\text{when }y\neq x
+  ((x,\omega)\cons\sigma)(x)     & \triangleq\forcef(\omega)      &                                \\
+  ((y,\omega)\cons\sigma)(x)     & \triangleq\sigma(x)            & \qquad\text{when }y\neq x
 \end{alignat*}
-The read of a variable that is bound to an anchor is not defined.
+Thus the read of a variable that is bound to an anchor is not defined.
 The read of a variable in $\bullet$ is not defined.
 
 \subsection{Traces}
@@ -140,6 +149,9 @@ The fuel bounds the depth of the calls and of the recursive values.
   \sigma_0\lk{n}{} & \langle\lambda x.b,\sigma\rangle    &  & \triangleq(\sigma_0\lk{n}\sigma)\bindt\lambda\sigma'.\langle\lambda x.b,\sigma'\rangle                        \\
   \sigma_0\lk{n}{} & C\:v_1\dots v_k                     &  & \triangleq(\sigma_0\lk{n}v_1)\bindt\lambda v_1'.\cdots(\sigma_0\lk{n}v_k)\bindt\lambda v_k'.C\:v_1'\dots v_k'
 \end{alignat*}
+
+The equation of an entry $(x,\omega)\cons\sigma$ has 1 case for each form of the weak value $\omega$.
+Linking into a weak value alone is not a trace, because a leaf of a trace is a value.
 
 The continuations read a variable, apply a function, take a field and take a module.
 In each case that the equations do not give, the trace is $\bot$.
@@ -205,8 +217,9 @@ It has no shadows, no traces and no linking, and a closure holds a term.
 \begin{center}
   \small
   \begin{tabular}{rrcl}
-    Environment & $\rho$ & $\Coloneqq$ & $\bullet$ $\vbar$ $(x,u)\cons\rho$ $\vbar$ $(x,\muval{u})\cons\rho$ $\vbar$ $(x,a)\cons\rho$ \\
-    Value       & $u$    & $\Coloneqq$ & $\rho$ $\vbar$ $\langle\lambda x.e,\rho\rangle$ $\vbar$ $C\:\overline{u}$
+    Environment & $\rho$   & $\Coloneqq$ & $\bullet$ $\vbar$ $(x,\omega)\cons\rho$                                  \\
+    Weak value  & $\omega$ & $\Coloneqq$ & $u$ $\vbar$ $\muval{u}$ $\vbar$ $a$                                     \\
+    Value       & $u$      & $\Coloneqq$ & $\rho$ $\vbar$ $\langle\lambda x.e,\rho\rangle$ $\vbar$ $C\:\overline{u}$
   \end{tabular}
 \end{center}
 $\evalf{N}(e,\rho)$ is the value of $e$ in $\rho$ at the fuel $N$.
@@ -224,7 +237,7 @@ It is a partial function, and $\evalf{0}$ is not defined.
 \end{alignat*}
 A constructor evaluates its arguments from left to right.
 A match evaluates its scrutinee, and then the first branch with the name and the number of fields of the value.
-The read $\rho(x)$ unrolls a recursive value, as in Section~\ref{sec:anchors}.
+The read $\rho(x)$ is the value of the weak value of $x$, as in Section~\ref{sec:ops}.
 $\fresh(\rho)$ is a name that is fresh for $\rho$ and that is not $\dead$.
 
 The lift $\lift{u}$ of a value of the interpreter is $u$ with $\sembracket{e}$ in the place of the term $e$ of each closure.

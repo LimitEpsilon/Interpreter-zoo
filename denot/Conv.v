@@ -164,7 +164,7 @@ Section shapes.
   (** The result of linking into an environment is a module. *)
   Lemma link_nv_leaf σ w (D : dest (link_nv cl lk σ0 σ) = Some w) : ∃ σ', w = vl_exp σ'.
   Proof.
-    destruct σ; simpl in D.
+    destruct σ as [|s|x [v|v|a] σ]; simpl in D.
     - inversion D; eauto.
     - apply dest_bind_inv in D as (m & _ & D).
       destruct m; simpl in D; inversion D; eauto.
@@ -283,7 +283,7 @@ Section leaf_shapes.
   (** Each leaf of linking into an environment is a module. *)
   Lemma link_nv_leaves σ : leaves is_exp (link_nv cl lk σ0 σ).
   Proof.
-    destruct σ; simpl; auto.
+    destruct σ as [|s|x [v|v|a] σ]; simpl; auto.
     - eapply leaves_bind; [|apply leaves_True]. intros [] _; simpl; auto.
     - eapply leaves_bind; [|apply leaves_True]. intros v' _.
       eapply leaves_bind; [|apply leaves_True]. intros [] _; simpl; auto.

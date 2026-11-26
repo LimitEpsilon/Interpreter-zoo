@@ -56,17 +56,19 @@ with an `f` that does not return has no result, as call-by-value requires.
 
 ### Recursive bindings
 
-An entry of an environment binds a variable to a value, to a recursive value `μ.v`, or to an
-anchor. An anchor is the placeholder for the value of a binding while its right side runs.
-Anchors are locally nameless. A recursive value around an index binds the index, and a name is
-free. The types are inductive, so open, close and unroll are structural recursions. They do not
-change the body of a closure.
+An entry of an environment binds a variable to a weak value. A weak value is a value, a
+recursive value `μ.v` or an anchor. Only a value is the result of a term.
+
+An anchor is the placeholder for the value of a binding while its right side runs. Anchors are
+locally nameless. A recursive value around an index binds the index, and a name is free. The
+types are inductive, so open, close and unroll are structural recursions. They do not change
+the body of a closure.
 
 - The denotation of `x = e1; e2` links `x ↦ anchor` into the denotation of `e1`. It closes the
   anchor in the result, which gives `x ↦ μ.v`. Then it continues with `e2`.
 - Linking into `μ.v` opens it with a fresh anchor, links, and closes it.
-- A read of `x ↦ μ.v` unrolls the recursive value. A read of `x ↦ anchor` gives no value. So
-  `x = x; ε` and `x = S x; ε` have no value.
+- A read forces the weak value of the variable. A value gives itself, and `μ.v` gives its
+  unrolling. An anchor gives no value. So `x = x; ε` and `x = S x; ε` have no value.
 - When an anchor leaves its scope, linking kills it in the guards. That is, it renames the
   anchor to the dead anchor, the name 0. A read of the dead anchor also gives no value.
 - Linking into the opened body of a recursive value is not a structural recursion. It uses the
@@ -104,7 +106,7 @@ as linking `σ'` into `X`. The lemma holds in the 2 directions (`call_a`, `call_
 |---|---|
 | `Syntax.v` | terms |
 | `Anchor.v` | anchors, and what open, close and rename do to one anchor |
-| `Domain.v` | shadows, environments, values and traces, and the operations on anchors |
+| `Domain.v` | shadows, environments, weak values, values and traces, and the operations on anchors |
 | `Nominal.v` | facts about open, close, rename and unroll |
 | `Semantics.v` | linking, the fuel, the denotation |
 | `Laws.v` | the monad laws of `bind`, and linking through `bind` |

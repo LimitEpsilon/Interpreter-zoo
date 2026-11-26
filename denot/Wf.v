@@ -38,8 +38,8 @@ Definition wfb (b : body) : Prop := ∃ e, b = den e.
 Definition wf_anc (k : nat) (a : anc) : Prop :=
   match a with B j => j < k | F _ => True end.
 
-(** A shadow, an environment, a value or a list of values is well formed
-    under [k] recursive values. *)
+(** A shadow, an environment, a weak value, a value or a list of values is
+    well formed under [k] recursive values. *)
 Fixpoint wfk_shdw (k : nat) (s : shdw) : Prop :=
   match s with
   | Init => True
@@ -51,9 +51,13 @@ with wfk_nv (k : nat) (σ : nv) : Prop :=
   match σ with
   | nv_mt => True
   | nv_sh s => wfk_shdw k s
-  | nv_bd _ v σ' => wfk_vl k v ∧ wfk_nv k σ'
-  | nv_mu _ v σ' => wfk_vl (S k) v ∧ wfk_nv k σ'
-  | nv_an _ a σ' => wf_anc k a ∧ wfk_nv k σ'
+  | nv_bd _ w σ' => wfk_wvl k w ∧ wfk_nv k σ'
+  end
+with wfk_wvl (k : nat) (w : wvl) : Prop :=
+  match w with
+  | wvl_v v => wfk_vl k v
+  | wvl_mu v => wfk_vl (S k) v
+  | wvl_an a => wf_anc k a
   end
 with wfk_vl (k : nat) (v : vl) : Prop :=
   match v with
@@ -72,6 +76,7 @@ with wfk_vls (k : nat) (vs : vls) : Prop :=
     anchors. *)
 Notation wf_shdw := (wfk_shdw 0).
 Notation wf_nv := (wfk_nv 0).
+Notation wf_wvl := (wfk_wvl 0).
 Notation wf_vl := (wfk_vl 0).
 Notation wf_vls := (wfk_vls 0).
 
@@ -137,11 +142,10 @@ Proof. exact (wf_ren ξ (vl_sh s) 0 0). Qed.
 Lemma wf_su u v : ∀ k, wfk_vl 1 u → wfk_vl (S k) v → wfk_vl k (su_vl (funr u) k v).
 Proof.
   induction v using vl_ind1; simpl in *; intros k Hu H; dconj; repeat split; eauto.
-  destruct a as [j|z]; simpl in *.
-  - destruct (Nat.eqb j k) eqn:E; simpl.
-    + split; auto. eapply wfk_mono; [|exact Hu]. lia.
-    + apply Nat.eqb_neq in E. split; auto. lia.
-  - split; auto.
+  destruct a as [j|z]; simpl in *; auto.
+  destruct (Nat.eqb j k) eqn:E; simpl.
+  - eapply wfk_mono; [|exact Hu]. lia.
+  - apply Nat.eqb_neq in E. lia.
 Qed.
 
 (** Unroll of a well-formed recursive value gives a well-formed value. *)
@@ -205,15 +209,19 @@ Proof. apply tr_mutind; simpl; intuition auto. Qed.
 Lemma wf_tall t : wf_tr t → tall (wfk_vl 0) (wfk_shdw 0) (wfk_vl 0) t.
 Proof. apply wf_tall_mut. Qed.
 
+(** The value of a well-formed weak value is well formed. *)
+Lemma wf_force w v (Hw : wf_wvl w) (R : force w = Some v) : wf_vl v.
+Proof.
+  destruct w; simpl in *; inversion R; subst; auto. apply wf_unroll; auto.
+Qed.
+
 (** A read in a well-formed environment gives a well-formed value. *)
 Lemma wf_read x σ v (Hσ : wf_nv σ) (R : read x σ = Some v) : wf_vl v.
 Proof.
-  induction σ; simpl in *; try discriminate.
+  induction σ as [|s|y w σ IH]; simpl in *; try discriminate.
   - inversion R; subst. simpl. auto.
-  - destruct (String.eqb x x0); [inversion R; subst|]; intuition auto.
-  - destruct (String.eqb x x0); [inversion R; subst|]; intuition auto.
-    apply wf_unroll; auto.
-  - destruct (String.eqb x x0); [discriminate|]. intuition auto.
+  - destruct (String.eqb x y); [|intuition auto].
+    apply (wf_force w); tauto.
 Qed.
 
 (** Each value of a well-formed list is well formed. *)

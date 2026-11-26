@@ -11,33 +11,47 @@
 
     ** Main definitions
 
-    - [rvl], [renv]: the values and the environments of the interpreter.
+    - [rvl], [renv], [rwvl]: the values, the environments and the weak values
+      of the interpreter.
     - [rclose], [runr]: close an anchor, and replace an index by a recursive
       value.
+    - [rforce]: the value of a weak value.
     - [rread]: the value of a variable.
-    - [ev]: the interpreter. *)
+    - [ev]: the interpreter.
+
+    ** Notes
+
+    - [rw_v] is a coercion. Thus [rcons x v ρ] is the entry of the value
+      [v]. *)
 From Stdlib Require Import Utf8 String Bool Arith List.
 From Denot Require Import Syntax Anchor.
 
 (** A value of the interpreter is a module, a closure or a constructor value.
-    An entry of an environment holds a value, a recursive value or an anchor. *)
+    An entry of an environment binds a variable to a weak value. A weak value
+    is a value, a recursive value or an anchor. *)
 Inductive rvl :=
   | r_exp (ρ : renv)                       (* a module *)
   | r_clos (x : var) (e : tm) (ρ : renv)
   | r_cstr (c : cstr) (vs : rvls)
 with renv :=
   | rnil
-  | rcons (x : var) (v : rvl) (ρ : renv)   (* x ↦ v *)
-  | rmu (x : var) (v : rvl) (ρ : renv)     (* x ↦ μ.v *)
-  | ran (x : var) (a : anc) (ρ : renv)     (* x ↦ an anchor *)
+  | rcons (x : var) (w : rwvl) (ρ : renv)  (* the entry x ↦ w *)
+with rwvl :=
+  | rw_v (v : rvl)                         (* a value *)
+  | rw_mu (v : rvl)                        (* μ.v, a recursive value *)
+  | rw_an (a : anc)                        (* an anchor *)
 with rvls :=
   | rvnil
   | rvcons (v : rvl) (vs : rvls).
 
 Scheme rvl_ind' := Induction for rvl Sort Prop
   with renv_ind' := Induction for renv Sort Prop
+  with rwvl_ind' := Induction for rwvl Sort Prop
   with rvls_ind' := Induction for rvls Sort Prop.
-Combined Scheme ref_mutind from rvl_ind', renv_ind', rvls_ind'.
+Combined Scheme ref_mutind from rvl_ind', renv_ind', rwvl_ind', rvls_ind'.
+
+(** A value is a weak value. *)
+Coercion rw_v : rvl >-> rwvl.
 
 (** Close an anchor. Under [k] recursive values, the name [ℓ] becomes the
     index [k]. *)
@@ -50,9 +64,13 @@ Fixpoint rclose (k : nat) (ℓ : loc) (v : rvl) : rvl :=
 with rclose_env (k : nat) (ℓ : loc) (ρ : renv) : renv :=
   match ρ with
   | rnil => rnil
-  | rcons x v ρ' => rcons x (rclose k ℓ v) (rclose_env k ℓ ρ')
-  | rmu x v ρ' => rmu x (rclose (S k) ℓ v) (rclose_env k ℓ ρ')
-  | ran x a ρ' => ran x (fclose ℓ k a) (rclose_env k ℓ ρ')
+  | rcons x w ρ' => rcons x (rclose_wvl k ℓ w) (rclose_env k ℓ ρ')
+  end
+with rclose_wvl (k : nat) (ℓ : loc) (w : rwvl) : rwvl :=
+  match w with
+  | rw_v v => rw_v (rclose k ℓ v)
+  | rw_mu v => rw_mu (rclose (S k) ℓ v)
+  | rw_an a => rw_an (fclose ℓ k a)
   end
 with rclose_list (k : nat) (ℓ : loc) (vs : rvls) : rvls :=
   match vs with
@@ -70,13 +88,16 @@ Fixpoint runr (k : nat) (u : rvl) (v : rvl) : rvl :=
 with runr_env (k : nat) (u : rvl) (ρ : renv) : renv :=
   match ρ with
   | rnil => rnil
-  | rcons x v ρ' => rcons x (runr k u v) (runr_env k u ρ')
-  | rmu x v ρ' => rmu x (runr (S k) u v) (runr_env k u ρ')
-  | ran x a ρ' =>
+  | rcons x w ρ' => rcons x (runr_wvl k u w) (runr_env k u ρ')
+  end
+with runr_wvl (k : nat) (u : rvl) (w : rwvl) : rwvl :=
+  match w with
+  | rw_v v => rw_v (runr k u v)
+  | rw_mu v => rw_mu (runr (S k) u v)
+  | rw_an a =>
     match a with
-    | B j => if Nat.eqb j k then rmu x u (runr_env k u ρ')
-             else ran x a (runr_env k u ρ')
-    | F _ => ran x a (runr_env k u ρ')
+    | B j => if Nat.eqb j k then rw_mu u else w
+    | F _ => w
     end
   end
 with runr_list (k : nat) (u : rvl) (vs : rvls) : rvls :=
@@ -95,9 +116,13 @@ Fixpoint rsup (v : rvl) : nat :=
 with rsup_env (ρ : renv) : nat :=
   match ρ with
   | rnil => 0
-  | rcons _ v ρ' => Nat.max (rsup v) (rsup_env ρ')
-  | rmu _ v ρ' => Nat.max (rsup v) (rsup_env ρ')
-  | ran _ a ρ' => Nat.max (match a with F ℓ => ℓ | B _ => 0 end) (rsup_env ρ')
+  | rcons _ w ρ' => Nat.max (rsup_wvl w) (rsup_env ρ')
+  end
+with rsup_wvl (w : rwvl) : nat :=
+  match w with
+  | rw_v v => rsup v
+  | rw_mu v => rsup v
+  | rw_an a => match a with F ℓ => ℓ | B _ => 0 end
   end
 with rsup_list (vs : rvls) : nat :=
   match vs with
@@ -105,14 +130,21 @@ with rsup_list (vs : rvls) : nat :=
   | rvcons v vs' => Nat.max (rsup v) (rsup_list vs')
   end.
 
-(** The value of the variable [x]. A read of a recursive value unrolls it. A
-    read of an anchor gives no value. *)
+(** The value of a weak value. A value gives itself. A recursive value gives
+    its unrolling. An anchor gives no value. *)
+Definition rforce (w : rwvl) : option rvl :=
+  match w with
+  | rw_v v => Some v
+  | rw_mu v => Some (runr 0 v v)
+  | rw_an _ => None
+  end.
+
+(** The value of the variable [x], that is the value of the weak value of the
+    first entry for [x]. *)
 Fixpoint rread (x : var) (ρ : renv) : option rvl :=
   match ρ with
   | rnil => None
-  | rcons x' v ρ' => if String.eqb x x' then Some v else rread x ρ'
-  | rmu x' v ρ' => if String.eqb x x' then Some (runr 0 v v) else rread x ρ'
-  | ran x' _ ρ' => if String.eqb x x' then None else rread x ρ'
+  | rcons x' w ρ' => if String.eqb x x' then rforce w else rread x ρ'
   end.
 
 (** The length of a list of values. *)
@@ -179,11 +211,11 @@ Section ev.
     | Mt => Some (r_exp rnil)
     | Bind x e1 e2 =>
       let ℓ := S (rsup_env ρ) in             (* a fresh anchor *)
-      match ev e1 (ran x (F ℓ) ρ) with
+      match ev e1 (rcons x (rw_an (F ℓ)) ρ) with
       | Some v1 =>
-        let w := rclose 0 ℓ v1 in             (* x ↦ μ.v1 *)
-        match ev e2 (rmu x w ρ) with
-        | Some (r_exp ρ2) => Some (r_exp (rmu x w ρ2))
+        let w := rw_mu (rclose 0 ℓ v1) in     (* the recursive value μ.v1 *)
+        match ev e2 (rcons x w ρ) with
+        | Some (r_exp ρ2) => Some (r_exp (rcons x w ρ2))
         | _ => None
         end
       | None => None

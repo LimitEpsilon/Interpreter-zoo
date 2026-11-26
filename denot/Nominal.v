@@ -3,11 +3,13 @@
     This file proves how open, close, rename and unroll act on each other and
     on the free anchors of a value. It states each fact once, for values.
     [vl_sh], [vl_exp] and [vl_cstr c] make a shadow, an environment or a list
-    of values into a value, so each fact also holds for them.
+    of values into a value, so each fact also holds for them. No constructor
+    makes a weak value into a value. A fact about a weak value comes from the
+    fact about an environment that holds it in an entry.
 
     ** Main definitions
 
-    - [vl_ind1]: induction on the 4 mutual types of values with one
+    - [vl_ind1]: induction on the 5 mutual types of values with one
       predicate.
     - [aan_vl]: a property of each anchor of a value.
     - [nf_vl x]: the anchor [x] is fresh for a value.
@@ -23,8 +25,8 @@
       same value.
     - [ren_open], [ren_close]: rename moves through open and close.
     - [close_open]: close after open of a fresh anchor gives the value back.
-    - [ren_unroll], [read_ren]: rename moves through unroll and through a
-      read.
+    - [ren_unroll], [force_ren], [read_ren]: rename moves through unroll,
+      through the value of a weak value and through a read.
     - [tmap_bind], [bind_tmap], [tmap_tmap], [tmap_ext]: the equations of
       [tmap].
 
@@ -39,7 +41,8 @@ Set Warnings "-notation-for-abbreviation".
 (** ** One induction principle for values *)
 
 (** Induction on values with one predicate. A shadow, an environment and a
-    list of values are values through [vl_sh], [vl_exp] and [vl_cstr c]. *)
+    list of values are values through [vl_sh], [vl_exp] and [vl_cstr c]. The
+    cases [Hbd], [Hmu] and [Han] are the 3 forms of an entry. *)
 Lemma vl_ind1 (P : vl → Prop)
   (HInit : P (vl_sh Init))
   (HRead : ∀ s x, P (vl_sh s) → P (vl_sh (Read s x)))
@@ -47,9 +50,9 @@ Lemma vl_ind1 (P : vl → Prop)
   (HDstr : ∀ s c i, P (vl_sh s) → P (vl_sh (Dstr s c i)))
   (Hmt : P (vl_exp nv_mt))
   (Hsh : ∀ s, P (vl_sh s) → P (vl_exp (nv_sh s)))
-  (Hbd : ∀ x v σ, P v → P (vl_exp σ) → P (vl_exp (nv_bd x v σ)))
-  (Hmu : ∀ x v σ, P v → P (vl_exp σ) → P (vl_exp (nv_mu x v σ)))
-  (Han : ∀ x a σ, P (vl_exp σ) → P (vl_exp (nv_an x a σ)))
+  (Hbd : ∀ x v σ, P v → P (vl_exp σ) → P (vl_exp (nv_bd x (wvl_v v) σ)))
+  (Hmu : ∀ x v σ, P v → P (vl_exp σ) → P (vl_exp (nv_bd x (wvl_mu v) σ)))
+  (Han : ∀ x a σ, P (vl_exp σ) → P (vl_exp (nv_bd x (wvl_an a) σ)))
   (Hclos : ∀ x b σ, P (vl_exp σ) → P (vl_clos x b σ))
   (Hnil : ∀ c, P (vl_cstr c vnil))
   (Hcons : ∀ c v vs, P v → P (vl_cstr c vs) → P (vl_cstr c (vcons v vs))) :
@@ -92,8 +95,9 @@ Ltac veq1 :=
   | |- Dstr _ _ _ = Dstr _ _ _ => f_equal
   | |- nv_sh _ = nv_sh _ => f_equal
   | |- nv_bd _ _ _ = nv_bd _ _ _ => f_equal
-  | |- nv_mu _ _ _ = nv_mu _ _ _ => f_equal
-  | |- nv_an _ _ _ = nv_an _ _ _ => f_equal
+  | |- wvl_v _ = wvl_v _ => f_equal
+  | |- wvl_mu _ = wvl_mu _ => f_equal
+  | |- wvl_an _ = wvl_an _ => f_equal
   | |- vcons _ _ = vcons _ _ => f_equal
   end.
 
@@ -123,9 +127,13 @@ with aan_nv (P : anc → Prop) (σ : nv) : Prop :=
   match σ with
   | nv_mt => True
   | nv_sh s => aan_shdw P s
-  | nv_bd _ v σ' => aan_vl P v ∧ aan_nv P σ'
-  | nv_mu _ v σ' => aan_vl P v ∧ aan_nv P σ'
-  | nv_an _ a σ' => P a ∧ aan_nv P σ'
+  | nv_bd _ w σ' => aan_wvl P w ∧ aan_nv P σ'
+  end
+with aan_wvl (P : anc → Prop) (w : wvl) : Prop :=
+  match w with
+  | wvl_v v => aan_vl P v
+  | wvl_mu v => aan_vl P v
+  | wvl_an a => P a
   end
 with aan_vl (P : anc → Prop) (v : vl) : Prop :=
   match v with
@@ -143,6 +151,7 @@ with aan_vls (P : anc → Prop) (vs : vls) : Prop :=
 (** The anchor [x] is fresh, that is no entry holds the name [x]. *)
 Notation nf_shdw x := (aan_shdw (fun a => a ≠ F x)) (only parsing).
 Notation nf_nv x := (aan_nv (fun a => a ≠ F x)) (only parsing).
+Notation nf_wvl x := (aan_wvl (fun a => a ≠ F x)) (only parsing).
 Notation nf_vl x := (aan_vl (fun a => a ≠ F x)) (only parsing).
 Notation nf_vls x := (aan_vls (fun a => a ≠ F x)) (only parsing).
 
@@ -354,14 +363,24 @@ Qed.
 
 (** ** Reads and fields *)
 
+(** The value of a renamed weak value is the renamed value. *)
+Lemma force_ren ξ w : force (ren_wvl ξ w) = option_map (ren_vl ξ) (force w).
+Proof. destruct w; simpl; auto. f_equal. symmetry. apply ren_unroll. Qed.
+
 (** A read in a renamed environment gives the renamed value. *)
 Lemma read_ren ξ x σ :
   read x (ren_nv ξ σ) = option_map (ren_vl ξ) (read x σ).
 Proof.
-  induction σ as [|s|y v σ IH|y v σ IH|y a σ IH]; simpl; auto.
-  - destruct (String.eqb x y); auto.
-  - destruct (String.eqb x y); auto. simpl. f_equal. symmetry. apply ren_unroll.
-  - destruct (String.eqb x y); auto.
+  induction σ as [|s|y w σ IH]; simpl; auto.
+  destruct (String.eqb x y); auto. apply force_ren.
+Qed.
+
+(** A property of each anchor of a weak value holds of its value. *)
+Lemma force_aan (P : anc → Prop) w v :
+  aan_wvl P w → force w = Some v → aan_vl P v.
+Proof.
+  destruct w; simpl; intros H R; inversion R; subst; auto.
+  apply aan_su; auto.
 Qed.
 
 (** A property of each anchor of an environment holds of each value that a
@@ -369,13 +388,10 @@ Qed.
 Lemma read_aan (P : anc → Prop) x σ v :
   aan_nv P σ → read x σ = Some v → aan_vl P v.
 Proof.
-  induction σ as [|s|y u σ IH|y u σ IH|y a σ IH]; simpl; intros H R;
-    try discriminate.
+  induction σ as [|s|y w σ IH]; simpl; intros H R; try discriminate.
   - inversion R; subst. simpl. auto.
-  - destruct (String.eqb x y); [inversion R; subst|]; intuition auto.
-  - destruct (String.eqb x y); [inversion R; subst|]; intuition auto.
-    apply aan_su; auto.
-  - destruct (String.eqb x y); [discriminate|]. intuition auto.
+  - destruct (String.eqb x y); [|intuition auto].
+    eapply force_aan; [|exact R]. tauto.
 Qed.
 
 (** A field of a list after [am_vls] is the field after [am_vl]. *)

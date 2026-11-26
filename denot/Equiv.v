@@ -298,9 +298,9 @@ Section eq_link.
       - (* The case of a recursive value. *)
         intros x w σ _ IHσ [W1 W2]. rewrite IHσ; auto.
         apply (mu_eq ξ σ0 _ w _ _ _
-          (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x u σ''))))
+          (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu u) σ''))))
                       (ren_tr ξ (link_nv cl lk σ0 σ)))
-          (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x u σ''))))
+          (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu u) σ''))))
                       (link_nv cl lk σ0 σ))); auto.
         + apply fresh_pos.
         + apply fresh_nv.
@@ -371,18 +371,18 @@ Section eq_link.
       not be the dead anchor. *)
   Lemma link_mu σ0 x w σ ℓ (Wσ0 : wf_nv σ0) (Ww : wfk_vl 1 w)
     (NZ : ℓ ≠ 0) (Nσ : nf_nv ℓ σ0) (Nw : nf_vl ℓ w) :
-    link_nv cl lk σ0 (nv_mu x w σ) =
+    link_nv cl lk σ0 (nv_bd x (wvl_mu w) σ) =
     bind (fun w' =>
-      bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w') σ''))))
+      bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ w')) σ''))))
         (link_nv cl lk σ0 σ))
       (killg ℓ (lk σ0 (open_vl 0 ℓ w))).
   Proof.
     simpl.
     rewrite <- (ren_tr_id (bind _ (killg (fresh σ0 w) _))). symmetry.
     apply (mu_eq (fun y => y) σ0 σ0 w w ℓ (fresh σ0 w)
-      (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x u σ''))))
+      (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu u) σ''))))
                   (link_nv cl lk σ0 σ))
-      (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x u σ''))))
+      (fun u => bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu u) σ''))))
                   (link_nv cl lk σ0 σ))); auto.
     - symmetry. apply vl_exp_inj. apply (ren_id (vl_exp σ0)).
     - symmetry. apply ren_id.
@@ -479,9 +479,9 @@ Proof. intros. rewrite !call_eq. simpl. rewrite eq_linkb; auto. Qed.
 (** [link_mu] at the fuel [n]. *)
 Lemma linkn_mu n σ0 x w σ ℓ (Wσ0 : wf_nv σ0) (Ww : wfk_vl 1 w)
   (NZ : ℓ ≠ 0) (Nσ : nf_nv ℓ σ0) (Nw : nf_vl ℓ w) :
-  link_nv (call n) (linkv n) σ0 (nv_mu x w σ) =
+  link_nv (call n) (linkv n) σ0 (nv_bd x (wvl_mu w) σ) =
   bind (fun w' =>
-    bind (on_env (fun σ'' => Ret (vl_exp (nv_mu x (close_vl 0 ℓ w') σ''))))
+    bind (on_env (fun σ'' => Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ w')) σ''))))
       (link_nv (call n) (linkv n) σ0 σ))
     (killg ℓ (linkv n σ0 (open_vl 0 ℓ w))).
 Proof.
@@ -509,18 +509,18 @@ Qed.
 Lemma denote_bind n x e1 e2 ℓ (NZ : ℓ ≠ 0) :
   denote n (Bind x e1 e2) =
   bind (fun v =>
-    bind (on_mod (fun σ2 => Ret (vl_exp (nv_mu x (close_vl 0 ℓ v) σ2))))
-      (call n (nv_mu x (close_vl 0 ℓ v) (nv_sh Init)) (den e2)))
-    (killg ℓ (call n (nv_an x (F ℓ) (nv_sh Init)) (den e1))).
+    bind (on_mod (fun σ2 => Ret (vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ v)) σ2))))
+      (call n (nv_bd x (wvl_mu (close_vl 0 ℓ v)) (nv_sh Init)) (den e2)))
+    (killg ℓ (call n (nv_bd x (wvl_an (F ℓ)) (nv_sh Init)) (den e1))).
 Proof.
   simpl. symmetry.
-  assert (wf_nv (nv_an x (F 1) (nv_sh Init))) as W1 by (simpl; auto).
+  assert (wf_nv (nv_bd x (wvl_an (F 1)) (nv_sh Init))) as W1 by (simpl; auto).
   pose proof (kill_close_eq (fun y => y) ℓ 1
-    (call n (nv_an x (F 1) (nv_sh Init)) (den e1))
-    (fun u => bind (on_mod (fun σ2 => Ret (vl_exp (nv_mu x u σ2))))
-                (call n (nv_mu x u (nv_sh Init)) (den e2)))
-    (fun u => bind (on_mod (fun σ2 => Ret (vl_exp (nv_mu x u σ2))))
-                (call n (nv_mu x u (nv_sh Init)) (den e2)))
+    (call n (nv_bd x (wvl_an (F 1)) (nv_sh Init)) (den e1))
+    (fun u => bind (on_mod (fun σ2 => Ret (vl_exp (nv_bd x (wvl_mu u) σ2))))
+                (call n (nv_bd x (wvl_mu u) (nv_sh Init)) (den e2)))
+    (fun u => bind (on_mod (fun σ2 => Ret (vl_exp (nv_bd x (wvl_mu u) σ2))))
+                (call n (nv_bd x (wvl_mu u) (nv_sh Init)) (den e2)))
     eq_refl NZ (wf_call n _ _ W1 (wfb_den e1))) as H.
   rewrite ren_tr_id in H.
   rewrite <- (eq_call n _ _ (den e1)) in H; auto.

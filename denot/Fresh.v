@@ -257,10 +257,10 @@ Proof.
   - auto.
   - (* The case of a binding. *)
     intros y e1 IH1 e2 IH2.
-    assert (wf_nv (nv_an y (F 1) (nv_sh Init))) as W1 by (simpl; auto).
+    assert (wf_nv (nv_bd y (wvl_an (F 1)) (nv_sh Init))) as W1 by (simpl; auto).
     eapply tall_bind with (Q := fun v => wf_vl v ∧ nf_vl x (close_vl 0 1 v)).
     + intros v [Wv Nv].
-      assert (wf_nv (nv_mu y (close_vl 0 1 v) (nv_sh Init))) as W2.
+      assert (wf_nv (nv_bd y (wvl_mu (close_vl 0 1 v)) (nv_sh Init))) as W2.
       { simpl. split; auto. apply wf_close; auto. }
       apply nft_bind; auto.
       * apply Ncl; simpl; auto.
@@ -271,7 +271,8 @@ Proof.
         -- intros u _. apply nf_kap; auto.
         -- intros s _. apply (nf_kap 1 (vl_sh s) 0 NZ).
         -- intros v Wv'. split; auto. apply nf_close_self.
-      * assert (nft x (call n (nv_an y (F 1) (nv_sh Init)) (fun m => denote m e1))) as N.
+      * assert (nft x (call n (nv_bd y (wvl_an (F 1)) (nv_sh Init))
+                         (fun m => denote m e1))) as N.
         { apply Ncl; simpl; auto. split; auto. congruence. }
         eapply tall_impl; [| | |apply tall_wf; [apply Wcl; auto|exact N]]; simpl.
         -- intros u [_ Hu]. apply nf_kap_other; auto.

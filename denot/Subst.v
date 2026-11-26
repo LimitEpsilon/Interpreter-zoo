@@ -50,7 +50,6 @@ Ltac an_case a z ℓ :=
 Lemma sub_k ℓ u v : ∀ k k', su_vl (fsub ℓ u) k v = su_vl (fsub ℓ u) k' v.
 Proof.
   induction v using vl_ind1; intros k0 k'; veq.
-  an_case a z ℓ.
 Qed.
 
 (** The replacement of a fresh anchor changes nothing. *)
@@ -66,8 +65,8 @@ Lemma wf_sub ℓ u v : wfk_vl 1 u → ∀ k k', wfk_vl k v → wfk_vl k (su_vl (
 Proof.
   induction v using vl_ind1; simpl in *; intros Hu k0 k' H; dconj;
     repeat split; eauto.
-  destruct a as [j|z]; simpl; [split; auto|].
-  destruct (Nat.eqb z ℓ); simpl; split; auto.
+  destruct a as [j|z]; simpl; auto.
+  destruct (Nat.eqb z ℓ); simpl; auto.
   eapply wfk_mono; [|exact Hu]. lia.
 Qed.
 
@@ -105,9 +104,8 @@ Lemma unr_wf w v : ∀ k d, wfk_vl k v → k ≤ d → su_vl (funr w) d v = v.
 Proof.
   induction v using vl_ind1; simpl in *; intros k0 d H LE; dconj; veq;
     try ih_lia.
-  destruct a as [j|z]; simpl in *.
-  - destruct (Nat.eqb j d) eqn:E; [apply Nat.eqb_eq in E; lia|]. f_equal. ih_lia.
-  - f_equal. ih_lia.
+  destruct a as [j|z]; simpl in *; auto.
+  destruct (Nat.eqb j d) eqn:E; auto. apply Nat.eqb_eq in E. lia.
 Qed.
 
 (** The kill of a fresh anchor changes nothing. *)
@@ -199,19 +197,23 @@ Proof.
   rewrite open_close; auto.
 Qed.
 
+(** The value of a weak value after the replacement is the value with the
+    anchor replaced. *)
+Lemma force_sub ℓ u w v (Wu : wfk_vl 1 u) :
+  force w = Some v → force (su_wvl (fsub ℓ u) 0 w) = Some (sub_vl ℓ u v).
+Proof.
+  destruct w as [v0|v0|a]; simpl; intros R; inversion R; subst; auto.
+  unfold unroll. rewrite (sub_unr ℓ u v0 v0 Wu 0 1 0). f_equal. f_equal.
+  apply sub_k.
+Qed.
+
 (** A read after the replacement gives the value with the anchor replaced. *)
 Lemma read_sub ℓ u x σ v (Wu : wfk_vl 1 u) :
   read x σ = Some v → read x (sub_nv ℓ u σ) = Some (sub_vl ℓ u v).
 Proof.
-  induction σ as [|s|y w σ IH|y w σ IH|y a σ IH]; simpl; intros R;
-    try discriminate.
+  induction σ as [|s|y w σ IH]; simpl; intros R; try discriminate.
   - inversion R; subst. reflexivity.
-  - destruct (String.eqb x y); [inversion R; subst|]; auto.
-  - destruct (String.eqb x y) eqn:E; auto. inversion R; subst.
-    unfold unroll. rewrite (sub_unr ℓ u w w Wu 0 1 0). f_equal. f_equal.
-    apply sub_k.
-  - destruct (String.eqb x y) eqn:E; [discriminate|].
-    destruct (fsub ℓ u 0 a); simpl; rewrite E; auto.
+  - destruct (String.eqb x y); auto. apply force_sub; auto.
 Qed.
 
 (** A field of a list after [su_vls] is the field after [su_vl]. *)
@@ -621,8 +623,8 @@ Section sub1.
         apply dest_bind_inv in D2 as (mσ & D3 & D4).
         destruct (link_nv_leaf _ _ _ _ _ D3) as (σ' & ->). simpl in D4.
         inversion D4; subst r; clear D4.
-        change (su_nv (fsub ℓ w) 0 (nv_mu x w2 σ)) with
-          (nv_mu x (su_vl (fsub ℓ w) 1 w2) (su_nv (fsub ℓ w) 0 σ)).
+        change (su_nv (fsub ℓ w) 0 (nv_bd x (wvl_mu w2) σ)) with
+          (nv_bd x (wvl_mu (su_vl (fsub ℓ w) 1 w2)) (su_nv (fsub ℓ w) 0 σ)).
         rewrite (linkn_mu m Σ0 x _ _ ℓ2); auto.
         + eapply dest_bind_intro.
           * rewrite dest_killg. rewrite (sub_open ℓ w ℓ2 w2 Ww NE 0 1).
@@ -640,7 +642,7 @@ Section sub1.
         pose proof (IHσ W2 _ D3 m Hm) as D5.
         destruct a as [j|z].
         + simpl. eapply dest_bind_intro; [exact D5|]. reflexivity.
-        + simpl. destruct (Nat.eqb z ℓ) eqn:E.
+        + cbn [su_nv su_wvl su_vl fsub]. destruct (Nat.eqb z ℓ) eqn:E; cbn iota.
           * (* The anchor is [ℓ]. Linking resolves the recursive value of [w] here. *)
             rewrite (linkn_mu m Σ0 x w _ ℓ); auto.
             eapply dest_bind_intro.
@@ -693,11 +695,11 @@ Section read_link.
       It gives a result for the opened value and a result for the rest of the
       environment. *)
   Lemma mu_inv m x w σ r (Ww : wfk_vl 1 w)
-    (D : dest (link_nv (call m) (linkv m) Σ0 (nv_mu x w σ)) = Some r) :
+    (D : dest (link_nv (call m) (linkv m) Σ0 (nv_bd x (wvl_mu w) σ)) = Some r) :
     ∃ ℓ w' σ', ℓ ≠ 0 ∧ nf_nv ℓ Σ0 ∧ nf_vl ℓ w ∧
       dest (linkv m Σ0 (open_vl 0 ℓ w)) = Some w' ∧
       dest (link_nv (call m) (linkv m) Σ0 σ) = Some (vl_exp σ') ∧
-      r = vl_exp (nv_mu x (close_vl 0 ℓ w') σ').
+      r = vl_exp (nv_bd x (wvl_mu (close_vl 0 ℓ w')) σ').
   Proof.
     simpl in D. apply dest_bind_inv in D as (w' & D1 & D2).
     rewrite dest_killg in D1. apply dest_bind_inv in D2 as (mσ & D3 & D4).
@@ -716,7 +718,7 @@ Section read_link.
     read x σ = Some v →
     dest (link_vl (call m) (linkv m) Σ0 v) = Some r → read x σ' = Some r.
   Proof.
-    induction σ as [|s|y u σ IH|y w σ IH|y a σ IH]; simpl; intros σ' v r Wσ D R Dv;
+    induction σ as [|s|y [u|w|a] σ IH]; simpl; intros σ' v r Wσ D R Dv;
       try discriminate.
     - inversion R; subst; clear R. simpl in Dv.
       apply dest_bind_inv in D as (m0 & Dm & D).
@@ -756,7 +758,7 @@ Section read_link.
     ∃ v M, read x σ = Some v ∧
       ∀ m', M ≤ m' → dest (link_vl (call m') (linkv m') Σ0 v) = Some r.
   Proof.
-    induction σ as [|s|y u σ IH|y w σ IH|y a σ IH]; simpl; intros σ' r Wσ D R.
+    induction σ as [|s|y [u|w|a] σ IH]; simpl; intros σ' r Wσ D R.
     - inversion D; subst. simpl in R. discriminate.
     - exists (vl_sh (Read s x)), m. split; auto.
       assert (dest (link_vl (call m) (linkv m) Σ0 (vl_sh (Read s x))) = Some r) as Dv.

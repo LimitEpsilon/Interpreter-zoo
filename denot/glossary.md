@@ -23,7 +23,11 @@ with this meaning only. A name in backticks is a code name, not a term.
 
 ## Values and traces
 
-**environment**: a list of entries, or a shadow that stands for a module (`nv`). An **entry** binds a variable to a value, to a recursive value or to an anchor.
+**environment**: a list of entries, or a shadow that stands for a module (`nv`). An **entry** binds a variable to a weak value (`nv_bd`).
+
+**weak value**: what an entry holds (`wvl`). It is a value, a recursive value or an anchor. Only a value is the result of a term.
+
+**force**: get the value of a weak value (`force`). A value gives itself. A recursive value gives its unrolling. An anchor gives no value.
 
 **unknown environment**: the environment that a denotation does not have (`Init`).
 
@@ -83,7 +87,7 @@ with this meaning only. A name in backticks is a code name, not a term.
 
 **name**: a free anchor `F ℓ`. **index**: a bound anchor `B i`. A recursive value around an index binds the index.
 
-**recursive value**: the entry `x ↦ μ.v` (`nv_mu`). The value `v` can hold the index of the entry.
+**recursive value**: the weak value `μ.v` (`wvl_mu`). The value `v` can hold the index of the recursive value.
 
 **open**: make the index of a recursive value a name (`open_vl`).
 
@@ -93,7 +97,7 @@ with this meaning only. A name in backticks is a code name, not a term.
 
 **rename**: change the names of the free anchors of a value with a function (`ren_vl`). A **renaming** is such a function.
 
-**replace**: put a recursive value in the place of each entry with a given anchor (`sub_vl`). (Do not write: substitute.)
+**replace**: put a recursive value in the place of each weak value that is a given anchor (`sub_vl`). (Do not write: substitute.)
 
 **fresh**: an anchor is fresh for a value when no entry of the value holds its name (`nf_vl`).
 

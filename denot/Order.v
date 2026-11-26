@@ -234,10 +234,10 @@ Proof.
     destruct m; simpl; auto.
   - auto.
   - intros x e1 IH1 e2 IH2.
-    assert (wf_nv (nv_an x (F 1) (nv_sh Init))) as Hσ1 by (simpl; auto).
+    assert (wf_nv (nv_bd x (wvl_an (F 1)) (nv_sh Init))) as Hσ1 by (simpl; auto).
     apply le_bind.
     + intros v Hv.
-      assert (wf_nv (nv_mu x (close_vl 0 1 v) (nv_sh Init))) as Hσ.
+      assert (wf_nv (nv_bd x (wvl_mu (close_vl 0 1 v)) (nv_sh Init))) as Hσ.
       { simpl. split; auto. apply wf_close; auto. }
       apply le_bind; auto using le_refl.
     + apply wf_killg. auto.
